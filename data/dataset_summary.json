@@ -1,0 +1,38 @@
+{
+  "city": "Edinburgh",
+  "seed": 42,
+  "walking_speed_kmh": 4.0,
+  "min_duration_sec": 300.0,
+  "num_pois": 28,
+  "categories": [
+    "Cafe",
+    "Castle",
+    "Cultural",
+    "Historical",
+    "Museum",
+    "Park"
+  ],
+  "num_users": 240,
+  "num_trajectories": 927,
+  "num_visits": 4804,
+  "num_transitions": 3877,
+  "num_clipped_durations": 378,
+  "pct_clipped_durations": 7.87,
+  "splits": {
+    "train": {
+      "users": 168,
+      "trajectories": 659,
+      "visits": 3423
+    },
+    "val": {
+      "users": 36,
+      "trajectories": 129,
+      "visits": 667
+    },
+    "test": {
+      "users": 36,
+      "trajectories": 139,
+      "visits": 714
+    }
+  }
+}
