@@ -80,8 +80,17 @@ class TourSearchSolver:
             cat = self.poi_categories[pid]
             self.cat_to_pois.setdefault(cat, []).append(pid)
 
-        # Precompute minimum possible -log P across all pairs & hours for admissible A* heuristic
-        self._min_neg_log_p = 0.05
+        # Precompute tight admissible lower bound on step cost per category for A*
+        self._min_step_cost = float("inf")
+        for u in self.poi_ids:
+            for h_sample in (9, 12, 15, 18):
+                for v in self.poi_ids:
+                    if u != v:
+                        c = self.step_cost(u, v, h_sample)
+                        if c < self._min_step_cost:
+                            self._min_step_cost = c
+        if not math.isfinite(self._min_step_cost):
+            self._min_step_cost = 0.5
 
     def step_cost(self, u_poi: int, v_poi: int, hour: int) -> float:
         """Computes minus log transition probability plus travel time."""
@@ -95,9 +104,8 @@ class TourSearchSolver:
         rem_steps = (num_stops - 1) - pos
         if rem_steps <= 0:
             return 0.0
-        # Triangle inequality guarantees straight-line travel time <= multi-hop travel time
         direct_walk = self.travel_time_hr.get((current_poi, end_poi), 0.0)
-        return rem_steps * self._min_neg_log_p + self.travel_weight * direct_walk
+        return rem_steps * self._min_step_cost + 0.5 * self.travel_weight * direct_walk
 
     def solve(
         self,

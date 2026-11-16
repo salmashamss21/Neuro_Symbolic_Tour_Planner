@@ -41,9 +41,6 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
     fig_dir.mkdir(parents=True, exist_ok=True)
     dataset = TourDataset(data_dir)
 
-    # -------------------------------------------------------------------------
-    # Train & Evaluate NN vs Baselines across 5 seeds (also used for Exp 3)
-    # -------------------------------------------------------------------------
     nn_seed_metrics = []
     mk_seed_metrics = []
     pop_seed_metrics = []
@@ -58,13 +55,9 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
         mk_seed_metrics.append(res["markov_baseline_test"])
         pop_seed_metrics.append(res["popularity_baseline_test"])
 
-    # -------------------------------------------------------------------------
-    # Experiment 1: UCS vs. A* vs. Greedy for L = 4..8 stops (5 seeds)
-    # -------------------------------------------------------------------------
     exp1_records = []
     stop_lengths = [4, 5, 6, 7, 8]
 
-    # Sample diverse valid patterns of length 4..8
     csp_helper = CategoryPatternCSP(
         categories=dataset.categories,
         category_mean_durations_hr=dataset.category_mean_duration_hr,
@@ -78,7 +71,6 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
             planner = IntegratedTourPlanner(dataset, nn_mod, mk_mod, pop_mod)
             search_solver = planner._build_search_solver(cost_mode="nn")
 
-            # Generate 15 diverse queries per (length, seed)
             for q_idx in range(15):
                 start_poi = int(rng.choice(dataset.poi_ids))
                 end_candidates = [p for p in dataset.poi_ids if p != start_poi]
@@ -102,7 +94,6 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
                     continue
                 pat = patterns[0]
 
-                # Run UCS, A*, Greedy
                 ucs_cost = None
                 for algo in ["ucs", "astar", "greedy"]:
                     t0 = time.perf_counter()
@@ -150,9 +141,6 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
     ).reset_index().round(3)
     exp1_summary.to_csv(out_dir / "exp1_search_comparison.csv", index=False)
 
-    # -------------------------------------------------------------------------
-    # Experiment 2: BT vs. BT+FC vs. BT+FC+AC-3 for L = 4..8 stops (5 seeds)
-    # -------------------------------------------------------------------------
     exp2_records = []
     for length in stop_lengths:
         for seed in SEEDS:
@@ -161,8 +149,7 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
                 start_cat = str(rng.choice(dataset.categories))
                 end_cat = str(rng.choice(dataset.categories))
                 must_see = str(rng.choice(dataset.categories))
-                # Realistic tight-to-moderate budget scaling with length
-                budget_hr = float(length * 0.72 + rng.uniform(-0.25, 0.35))
+                budget_hr = float(length * 0.78 + rng.uniform(-0.20, 0.35))
 
                 for variant_name, u_fc, u_ac3 in [
                     ("BT", False, False),
@@ -207,9 +194,6 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
     ).reset_index().round(3)
     exp2_summary.to_csv(out_dir / "exp2_csp_ablation.csv", index=False)
 
-    # -------------------------------------------------------------------------
-    # Experiment 3: NN Costs vs. Markov-Count vs. Popularity against Held-Out Test Trajectories
-    # -------------------------------------------------------------------------
     test_trajs = dataset.get_trajectories_by_split("test")
     exp3_records = []
 
@@ -217,7 +201,6 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
         nn_mod, mk_mod, pop_mod, _ = trained_models[seed]
         planner = IntegratedTourPlanner(dataset, nn_mod, mk_mod, pop_mod)
         rng = np.random.default_rng(seed * 300)
-        # Bootstrap sample 80% of held-out test trajectories per seed run
         chosen_indices = rng.choice(len(test_trajs), size=int(0.85 * len(test_trajs)), replace=False)
 
         for cost_mode, mode_label in [
@@ -238,11 +221,9 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
                 start_poi = true_pois[0]
                 end_poi = true_pois[-1]
                 start_hr = float(tr["start_hour"])
-                # Must-see category taken from the dominant interior category of the ground-truth tour
                 must_see = true_cats[len(true_cats) // 2]
                 budget_hr = tr["total_time_hr"] * 1.15
 
-                # Evaluate both exact pattern reconstruction and full CSP+Search pipeline
                 out = planner.plan_tour(
                     start_poi=start_poi,
                     end_poi=end_poi,
@@ -256,7 +237,6 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
                     cost_mode=cost_mode,
                     max_patterns=10,
                 )
-                # Also evaluate on the true category sequence to isolate POI selection quality
                 res_true_pat = search_solver.solve(
                     pattern=true_cats,
                     start_poi=start_poi,
@@ -278,7 +258,6 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
                 pairs_f1_list.append(pr_f1)
                 dur_err_list.append(dur_err_min)
 
-            # Combine with transition-level test metrics for this seed
             if cost_mode == "nn":
                 m_test = trained_models[seed][3]["nn_test"]
             elif cost_mode == "markov":
@@ -320,9 +299,6 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
     ).round(4)
     exp3_summary.to_csv(out_dir / "exp3_trajectory_f1_comparison.csv", index=False)
 
-    # -------------------------------------------------------------------------
-    # Generate Publication-Quality Plots for Report & Presentation
-    # -------------------------------------------------------------------------
     plt.rcParams.update({
         "font.size": 10.5,
         "axes.titlesize": 11.5,
@@ -333,7 +309,6 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
         "figure.titlesize": 12.5,
     })
 
-    # Plot 1: Experiment 1 (Search Nodes Expanded & Path Cost / Optimality Gap across 4-8 stops)
     fig, axes = plt.subplots(1, 2, figsize=(6.8, 3.4), constrained_layout=True)
     colors_exp1 = {"UCS": "#1e3a5f", "A*": "#0f766e", "GREEDY": "#d97706"}
     markers_exp1 = {"UCS": "o", "A*": "s", "GREEDY": "^"}
@@ -378,7 +353,6 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
     fig.savefig(fig_dir / "exp1_search_plot.png", dpi=220, bbox_inches="tight")
     plt.close(fig)
 
-    # Plot 2: Experiment 2 (CSP Backtracks & Assignments for BT vs BT+FC vs BT+FC+AC-3)
     fig, axes = plt.subplots(1, 2, figsize=(6.8, 3.4), constrained_layout=True)
     colors_exp2 = {"BT": "#b91c1c", "BT+FC": "#d97706", "BT+FC+AC-3": "#0f766e"}
     markers_exp2 = {"BT": "o", "BT+FC": "s", "BT+FC+AC-3": "D"}
@@ -425,7 +399,6 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
     fig.savefig(fig_dir / "exp2_csp_plot.png", dpi=220, bbox_inches="tight")
     plt.close(fig)
 
-    # Plot 3: Experiment 3 (Held-Out Trajectory F1 & NN Training Convergence)
     fig, axes = plt.subplots(1, 2, figsize=(6.8, 3.4), constrained_layout=True)
 
     models_order = ["Two-Head NN Costs", "Markov-Count Baseline", "Popularity Baseline"]
@@ -451,7 +424,6 @@ def run_all_experiments(data_dir: str | Path = "data", out_dir: str | Path = "ou
     axes[0].grid(True, axis="y", linestyle="--", alpha=0.4)
     axes[0].legend(loc="upper right", frameon=True)
 
-    # Panel B: NN Training & Validation NLL Convergence (Seed 42)
     hist = trained_models[42][3]["history"]
     epochs_arr = np.arange(1, len(hist["train_nll"]) + 1)
     axes[1].plot(epochs_arr, hist["train_nll"], label="Train NLL (Head 1)", color="#1e3a5f", linewidth=2.0)
@@ -483,9 +455,7 @@ if __name__ == "__main__":
     res = run_all_experiments("data", "outputs")
     print("=== Experiment 1: Search (UCS vs A* vs Greedy) ===")
     print(pd.DataFrame(res["exp1_search"]).to_string(index=False))
-    print("
-=== Experiment 2: CSP (BT vs BT+FC vs BT+FC+AC-3) ===")
+    print("\n=== Experiment 2: CSP (BT vs BT+FC vs BT+FC+AC-3) ===")
     print(pd.DataFrame(res["exp2_csp"]).to_string(index=False))
-    print("
-=== Experiment 3: Cost Models & Held-Out F1 ===")
+    print("\n=== Experiment 3: Cost Models & Held-Out F1 ===")
     print(pd.DataFrame(res["exp3_f1_and_nn"]).to_string(index=False))

@@ -1,29 +1,29 @@
 poiID,poiName,category,latitude,longitude,base_duration_sec,popularity_prior,totalVisits,avgVisitDurationSec,avgVisitDurationHours
-1,Edinburgh Castle,Castle,55.9486,-3.1999,4200.0,0.96,245,4316.78,1.1991
-2,National Museum of Scotland,Museum,55.9469,-3.1892,5100.0,0.94,228,5431.23,1.5087
-3,Palace of Holyroodhouse,Castle,55.9527,-3.1723,3900.0,0.88,143,3949.67,1.0971
-4,Princes Street Gardens,Park,55.9502,-3.1956,2400.0,0.92,228,2519.25,0.6998
-5,Calton Hill,Park,55.9554,-3.1822,2700.0,0.89,159,2603.28,0.7231
-6,Arthur's Seat,Park,55.9441,-3.1618,5400.0,0.85,78,5374.23,1.4928
-7,Royal Mile,Historical,55.9505,-3.188,2800.0,0.95,185,2854.84,0.793
-8,St Giles' Cathedral,Historical,55.9495,-3.1909,2100.0,0.87,145,2035.86,0.5655
-9,Scott Monument,Historical,55.9524,-3.1933,1800.0,0.86,162,1837.55,0.5104
-10,Scottish National Gallery,Museum,55.9509,-3.1957,3600.0,0.84,212,3769.59,1.0471
-11,Royal Botanic Garden,Park,55.9652,-3.2092,4500.0,0.8,66,3994.7,1.1096
-12,Greyfriars Kirkyard,Historical,55.9468,-3.1925,1900.0,0.82,199,1929.32,0.5359
-13,Camera Obscura,Museum,55.9489,-3.1958,3300.0,0.79,207,3297.16,0.9159
-14,Grassmarket Historic Quarter,Historical,55.9476,-3.1965,2500.0,0.81,133,2593.6,0.7204
-15,The Elephant House Cafe,Cafe,55.9475,-3.1918,2400.0,0.83,331,2685.76,0.746
-16,Royal Mile Coffee Roasters,Cafe,55.9501,-3.1895,1950.0,0.78,308,2225.11,0.6181
-17,Scottish Parliament,Cultural,55.952,-3.1751,2400.0,0.75,98,2495.61,0.6932
-18,Dynamic Earth,Museum,55.9505,-3.1744,4200.0,0.74,150,4337.87,1.205
-19,National Monument,Historical,55.9548,-3.1818,1500.0,0.76,134,1476.14,0.41
-20,Nelson Monument,Historical,55.9543,-3.1826,1600.0,0.72,96,1663.41,0.4621
-21,Writers' Museum,Museum,55.9497,-3.1928,2600.0,0.73,210,2687.75,0.7466
-22,Museum of Childhood,Museum,55.9503,-3.1862,2400.0,0.71,188,2450.42,0.6807
-23,Dean Village,Cultural,55.9521,-3.2175,2700.0,0.77,50,2554.48,0.7096
-24,The Meadows Park,Park,55.9416,-3.1915,2600.0,0.75,119,2563.12,0.712
-25,New Town Georgian Square,Cafe,55.9545,-3.197,2100.0,0.76,212,2325.8,0.6461
-26,Holyrood Park Pavilion Cafe,Cafe,55.9512,-3.1705,1800.0,0.7,178,2036.01,0.5656
-27,University of Edinburgh Old College,Cultural,55.9474,-3.1873,2200.0,0.74,175,2225.64,0.6182
-28,Castlehill Heritage Hub,Castle,55.9488,-3.1972,2900.0,0.78,165,2931.83,0.8144
+1,Edinburgh Castle,Castle,55.9486,-3.1999,4200.0,0.96,229,4297.43,1.1937
+2,National Museum of Scotland,Museum,55.9469,-3.1892,5100.0,0.94,293,5641.28,1.567
+3,Palace of Holyroodhouse,Castle,55.9527,-3.1723,3900.0,0.88,148,3781.57,1.0504
+4,Princes Street Gardens,Park,55.9502,-3.1956,2400.0,0.92,238,2412.01,0.67
+5,Calton Hill,Park,55.9554,-3.1822,2700.0,0.89,187,2432.37,0.6757
+6,Arthur's Seat,Park,55.9441,-3.1618,5400.0,0.85,91,4958.98,1.3775
+7,Royal Mile,Historical,55.9505,-3.188,2800.0,0.95,184,2926.45,0.8129
+8,St Giles' Cathedral,Historical,55.9495,-3.1909,2100.0,0.87,170,2204.03,0.6122
+9,Scott Monument,Historical,55.9524,-3.1933,1800.0,0.86,94,1764.23,0.4901
+10,Scottish National Gallery,Museum,55.9509,-3.1957,3600.0,0.84,146,3791.82,1.0533
+11,Royal Botanic Garden,Park,55.9652,-3.2092,4500.0,0.8,41,4248.32,1.1801
+12,Greyfriars Kirkyard,Historical,55.9468,-3.1925,1900.0,0.82,206,2101.32,0.5837
+13,Camera Obscura,Museum,55.9489,-3.1958,3300.0,0.79,142,3326.62,0.9241
+14,Grassmarket Historic Quarter,Historical,55.9476,-3.1965,2500.0,0.81,199,2537.27,0.7048
+15,The Elephant House Cafe,Cafe,55.9475,-3.1918,2400.0,0.83,390,2850.16,0.7917
+16,Royal Mile Coffee Roasters,Cafe,55.9501,-3.1895,1950.0,0.78,335,2228.54,0.619
+17,Scottish Parliament,Cultural,55.952,-3.1751,2400.0,0.75,180,2205.54,0.6126
+18,Dynamic Earth,Museum,55.9505,-3.1744,4200.0,0.74,174,4103.9,1.14
+19,National Monument,Historical,55.9548,-3.1818,1500.0,0.76,159,1416.65,0.3935
+20,Nelson Monument,Historical,55.9543,-3.1826,1600.0,0.72,108,1458.9,0.4052
+21,Writers' Museum,Museum,55.9497,-3.1928,2600.0,0.73,214,2844.22,0.7901
+22,Museum of Childhood,Museum,55.9503,-3.1862,2400.0,0.71,241,2606.13,0.7239
+23,Dean Village,Cultural,55.9521,-3.2175,2700.0,0.77,42,2407.44,0.6687
+24,The Meadows Park,Park,55.9416,-3.1915,2600.0,0.75,67,2443.85,0.6788
+25,New Town Georgian Square,Cafe,55.9545,-3.197,2100.0,0.76,92,2403.84,0.6677
+26,Holyrood Park Pavilion Cafe,Cafe,55.9512,-3.1705,1800.0,0.7,85,2067.71,0.5744
+27,University of Edinburgh Old College,Cultural,55.9474,-3.1873,2200.0,0.74,232,2134.16,0.5928
+28,Castlehill Heritage Hub,Castle,55.9488,-3.1972,2900.0,0.78,156,3050.77,0.8474

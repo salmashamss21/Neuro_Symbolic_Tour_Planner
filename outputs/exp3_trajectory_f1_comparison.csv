@@ -1,0 +1,4 @@
+model,point_f1_mean,point_f1_std,interior_f1_mean,interior_f1_std,pairs_f1_mean,pairs_f1_std,tour_time_mae_mean,tour_time_mae_std,nll_mean,nll_std,top1_acc_mean,top1_acc_std,top3_acc_mean,top3_acc_std,stop_dur_mae_mean,stop_dur_mae_std
+Markov-Count Baseline,0.7473,0.0065,0.5753,0.012,0.5455,0.0128,41.2864,1.3065,2.8245,0.0,16.97,0.0,40.33,0.0,13.82,0.0
+Popularity Baseline,0.651,0.0046,0.411,0.0097,0.3973,0.0065,31.7802,0.7899,3.1373,0.0,7.85,0.0,25.91,0.0,16.03,0.0
+Two-Head NN Costs,0.7945,0.0061,0.6583,0.0114,0.6241,0.0119,39.2012,7.4879,2.3834,0.0255,24.564,0.419,55.362,1.1369,13.334,0.9223

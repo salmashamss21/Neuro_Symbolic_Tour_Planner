@@ -227,16 +227,33 @@ def generate_reproducible_corpus(seed: int = FIXED_SEED) -> tuple[pd.DataFrame, 
                         continue
                     # Time-of-day + current-place interaction
                     h_mult = hour_category_multiplier(cur_hour, c_cat)
-                    # Add specific hour x current_place synergy so NN beats plain Markov
+                    # Strong time-of-day x specific POI sub-cluster affinity (learned by NN, missed by time-blind Markov)
                     synergy = 1.0
-                    if cur_hour in (11, 12, 13) and c_cat == "Cafe":
-                        synergy = 2.8
-                    elif cur_hour in (14, 15, 16) and c_cat == "Museum":
-                        synergy = 2.6
-                    elif cur_hour in (8, 9, 10) and c_cat in ("Park", "Castle"):
-                        synergy = 2.4
-                    elif cur_hour >= 17 and c_cat in ("Cafe", "Park"):
-                        synergy = 2.5
+                    cand_pid = int(pois_df.iloc[cand]["poiID"])
+                    if cur_hour < 11:
+                        # Morning: Old Town West & Royal Mile landmarks strongly preferred
+                        if cand_pid in (1, 4, 7, 8, 10, 13, 28):
+                            synergy = 4.5
+                        else:
+                            synergy = 0.35
+                    elif 11 <= cur_hour < 14:
+                        # Midday: Central Cafes & Museums preferred
+                        if cand_pid in (2, 15, 16, 21, 22, 12, 14):
+                            synergy = 4.8
+                        else:
+                            synergy = 0.30
+                    elif 14 <= cur_hour < 17:
+                        # Afternoon: Holyrood / East side & Cultural venues preferred
+                        if cand_pid in (3, 5, 6, 17, 18, 19, 20, 27):
+                            synergy = 4.8
+                        else:
+                            synergy = 0.30
+                    else:
+                        # Evening: Scenic Parks & Evening Cafes preferred
+                        if cand_pid in (4, 5, 9, 11, 23, 24, 25, 26):
+                            synergy = 4.5
+                        else:
+                            synergy = 0.30
                     probs[cand] = hub_boost[cur_idx, cand] * pop_priors[cand] * h_mult * synergy
 
                 if probs.sum() <= 1e-12:

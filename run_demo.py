@@ -11,7 +11,7 @@ Demonstrates:
      category pattern into the most plausible sequence of real Edinburgh landmarks.
    - Part 3 (Two-Head Neural Network): Supplies time-aware transition probabilities P(next | cur, hour)
      and predicts visit durations (with comparison of NN ON vs. NN OFF / Popularity fallback).
-3. Fallback demonstration when budget is too tight (e.g., 2.0 hours for 6 stops), reporting the
+3. Fallback demonstration when budget is too tight (e.g., 2.4 hours for 6 stops), reporting the
    exact minimum working budget and returning the cheapest itinerary with a warning.
 4. Saves a 3-panel visual cooperation figure (`outputs/figures/demo_cooperation.png`).
 """
@@ -46,11 +46,6 @@ def main() -> None:
     )
     planner = IntegratedTourPlanner(dataset, nn_model, markov_base, pop_base)
 
-    # Demo Query matching the project prompt's Edinburgh 5-hour Museum example:
-    # Start: Princes Street Gardens (POI 4, Park)
-    # End: Calton Hill (POI 5, Park)
-    # Stops: 6 stops (e.g., Park -> Museum -> Castle -> Cafe -> Museum -> Park)
-    # Budget: 5.0 hours, Must-See: Museum, Start Hour: 10:00 AM
     start_poi = 4   # Princes Street Gardens (Park)
     end_poi = 5     # Calton Hill (Park)
     budget_hr = 5.0
@@ -58,8 +53,7 @@ def main() -> None:
     num_stops = 6
     start_hour = 10.0
 
-    print("
-[1] INPUT QUERY")
+    print("\n[1] INPUT QUERY")
     print(f"  City             : Edinburgh ({len(dataset.poi_ids)} POIs across {len(dataset.categories)} categories)")
     print(f"  Start Place      : {dataset.poi_names[start_poi]} (ID={start_poi}, Category={dataset.poi_categories[start_poi]})")
     print(f"  End Place        : {dataset.poi_names[end_poi]} (ID={end_poi}, Category={dataset.poi_categories[end_poi]})")
@@ -67,9 +61,7 @@ def main() -> None:
     print(f"  Number of Stops  : {num_stops} stops")
     print(f"  Must-See Category: {must_see}")
 
-    # Show CSP pruning comparison (BT vs BT+FC vs BT+FC+AC-3) on this query
-    print("
-[2] CSP CATEGORY-PATTERN GENERATION & PRUNING TRACE")
+    print("\n[2] CSP CATEGORY-PATTERN GENERATION & PRUNING TRACE")
     csp_modes = [
         ("Backtracking Only (BT)", False, False),
         ("BT + Forward Checking (FC)", True, False),
@@ -91,7 +83,6 @@ def main() -> None:
             f"Assignments: {st.assignments:4d} | Backtracks: {st.backtracks:4d} | Pruned Values: {st.pruned_values:4d}"
         )
 
-    # Run full integrated pipeline with NN ON
     out_nn = planner.plan_tour(
         start_poi=start_poi,
         end_poi=end_poi,
@@ -106,8 +97,7 @@ def main() -> None:
         max_patterns=10,
     )
 
-    print("
-[3] CANDIDATE PATTERNS EVALUATED BY HEURISTIC SEARCH (A*) + NN DURATION CHECK")
+    print("\n[3] CANDIDATE PATTERNS EVALUATED BY HEURISTIC SEARCH (A*) + NN DURATION CHECK")
     for idx, ev in enumerate(out_nn.pattern_evaluations, start=1):
         pat_str = " -> ".join(ev["pattern"])
         status_tag = "ACCEPTED" if ev["accepted"] else "REJECTED (> Budget)"
@@ -119,12 +109,11 @@ def main() -> None:
 
     best = out_nn.best_itinerary
     assert best is not None
-    print("
-[4] BEST RETURNED ITINERARY (NN ON + A* + BT+FC+AC-3)")
+    print("\n[4] BEST RETURNED ITINERARY (NN ON + A* + BT+FC+AC-3)")
     print(f"  Status           : {out_nn.status.upper()} — {out_nn.message}")
     print(f"  Category Pattern : {' -> '.join(best.categories)}")
     print(f"  Total Time       : {best.total_time_hr:.2f} hours ({best.total_time_hr * 60:.1f} min) / {budget_hr:.2f}h budget")
-    print(f"  Total Search Cost: {best.total_cost:.4f} (Search Nodes Expanded: { out_nn.total_search_stats.nodes_expanded }, Generated: { out_nn.total_search_stats.nodes_generated })")
+    print(f"  Total Search Cost: {best.total_cost:.4f} (Search Nodes Expanded: {out_nn.total_search_stats.nodes_expanded}, Generated: {out_nn.total_search_stats.nodes_generated})")
     print("-" * 78)
     print(f"  {'Stop':<5} {'Arrival':<8} {'Depart':<8} {'Visit(m)':<9} {'Walk(m)':<8} {'Category':<11} {'Landmark Name'}")
     print("-" * 78)
@@ -139,7 +128,6 @@ def main() -> None:
         )
     print("-" * 78)
 
-    # Compare System with NN ON vs NN OFF (Popularity / Static Duration Baseline)
     out_off = planner.plan_tour(
         start_poi=start_poi,
         end_poi=end_poi,
@@ -155,20 +143,17 @@ def main() -> None:
     )
     best_off = out_off.best_itinerary
     assert best_off is not None
-    # Score both itineraries under the true NN transition log-likelihood to show plausibility gain
     nn_solver = planner._build_search_solver(cost_mode="nn")
     off_true_cost = sum(
         nn_solver.step_cost(best_off.pois[i], best_off.pois[i + 1], int(best_off.arrival_hours[i] + best_off.visit_durations_hr[i]) % 24)
         for i in range(len(best_off.pois) - 1)
     )
-    print("
-[5] ABLATION: SYSTEM WITH NEURAL NETWORK ON vs. OFF")
+    print("\n[5] ABLATION: SYSTEM WITH NEURAL NETWORK ON vs. OFF")
     print(f"  NN ON  Route : {' -> '.join(dataset.poi_names[p] for p in best.pois)}")
     print(f"                 Plausibility Cost (NLL + Walk): {best.total_cost:.3f} | Predicted Time: {best.total_time_hr:.2f}h")
     print(f"  NN OFF Route : {' -> '.join(dataset.poi_names[p] for p in best_off.pois)}")
     print(f"                 Plausibility Cost (NLL + Walk): {off_true_cost:.3f} | Static Time   : {best_off.total_time_hr:.2f}h")
 
-    # Show Tight-Budget Fallback Demo
     tight_budget = 2.4
     out_tight = planner.plan_tour(
         start_poi=start_poi,
@@ -178,18 +163,15 @@ def main() -> None:
         num_stops=num_stops,
         start_hour=start_hour,
     )
-    print("
-[6] IMPOSSIBLE / TIGHT BUDGET FALLBACK DEMO (Budget = 2.40h for 6 stops)")
+    print("\n[6] IMPOSSIBLE / TIGHT BUDGET FALLBACK DEMO (Budget = 2.40h for 6 stops)")
     print(f"  Status : {out_tight.status.upper()}")
     print(f"  Message: {out_tight.message}")
 
-    # Plot 3-Panel Cooperation Visual
     fig_dir = Path("outputs/figures")
     fig_dir.mkdir(parents=True, exist_ok=True)
     plt.rcParams.update({"font.size": 10.0, "axes.titlesize": 11.0, "axes.labelsize": 10.0})
     fig, axes = plt.subplots(1, 3, figsize=(9.6, 3.3), constrained_layout=True)
 
-    # Panel 1: CSP Pruning Bar Chart
     csp_labels = ["BT Only", "BT + FC", "BT + FC + AC-3"]
     bt_vals = []
     asgn_vals = []
@@ -217,7 +199,6 @@ def main() -> None:
     axes[0].grid(True, axis="y", linestyle="--", alpha=0.4)
     axes[0].legend(loc="upper right")
 
-    # Panel 2: Candidate Pattern Expected vs NN Predicted Time vs Budget
     pat_ids = [f"P{i}" for i in range(1, len(out_nn.pattern_evaluations) + 1)]
     csp_times = [ev["expected_csp_time_hr"] for ev in out_nn.pattern_evaluations]
     nn_times = [ev["predicted_nn_time_hr"] for ev in out_nn.pattern_evaluations]
@@ -233,7 +214,6 @@ def main() -> None:
     axes[1].grid(True, axis="y", linestyle="--", alpha=0.4)
     axes[1].legend(loc="upper left", fontsize=8.5)
 
-    # Panel 3: Geographic Map of Selected Edinburgh Route
     lats = [dataset.poi_coords[p][0] for p in best.pois]
     lons = [dataset.poi_coords[p][1] for p in best.pois]
     all_lats = [dataset.poi_coords[p][0] for p in dataset.poi_ids]
@@ -260,10 +240,8 @@ def main() -> None:
     out_fig = fig_dir / "demo_cooperation.png"
     fig.savefig(out_fig, dpi=220, bbox_inches="tight")
     plt.close(fig)
-    print(f"
-[7] SAVED COOPERATION PLOT -> {out_fig}")
+    print(f"\n[7] SAVED COOPERATION PLOT -> {out_fig}")
 
-    # Save demo trace JSON for report/slides grounding
     demo_record = {
         "query": {
             "city": "Edinburgh",

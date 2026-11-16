@@ -13,26 +13,26 @@
     "Park"
   ],
   "num_users": 240,
-  "num_trajectories": 927,
-  "num_visits": 4804,
-  "num_transitions": 3877,
-  "num_clipped_durations": 378,
-  "pct_clipped_durations": 7.87,
+  "num_trajectories": 936,
+  "num_visits": 4843,
+  "num_transitions": 3907,
+  "num_clipped_durations": 390,
+  "pct_clipped_durations": 8.05,
   "splits": {
     "train": {
       "users": 168,
-      "trajectories": 659,
-      "visits": 3423
+      "trajectories": 670,
+      "visits": 3462
     },
     "val": {
       "users": 36,
-      "trajectories": 129,
-      "visits": 667
+      "trajectories": 134,
+      "visits": 701
     },
     "test": {
       "users": 36,
-      "trajectories": 139,
-      "visits": 714
+      "trajectories": 132,
+      "visits": 680
     }
   }
 }

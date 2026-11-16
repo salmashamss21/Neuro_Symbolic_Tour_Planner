@@ -43,22 +43,23 @@ class TourDataset:
         }
         self.categories = sorted(list(set(self.poi_categories.values())))
 
-        # Category average visit durations in hours (used by CSP expected time budget pruning)
+        # Category expected visit durations in hours (25th-percentile feasible duration per category
+        # so CSP expected time acts as a realistic filter without falsely rejecting compact POIs)
         cat_durs = self.traj_df[self.traj_df["split"] == "train"].copy()
         cat_durs["category"] = cat_durs["poiID"].map(self.poi_categories)
         self.category_mean_duration_hr = (
-            cat_durs.groupby("category")["visitDurationSec"].mean() / 3600.0
+            cat_durs.groupby("category")["visitDurationSec"].quantile(0.25) / 3600.0
         ).to_dict()
         self.poi_mean_duration_hr = dict(
             zip(self.pois_df["poiID"].astype(int), self.pois_df["avgVisitDurationHours"].astype(float))
         )
 
         # Pairwise walking travel time in hours (at 4.0 km/h)
-        n = len(self.poi_ids)
         self.travel_time_hr = {}
-        all_walk_times = []
+        neighbor_walk_times = []
         for u in self.poi_ids:
             lat1, lon1 = self.poi_coords[u]
+            dists_u = []
             for v in self.poi_ids:
                 if u == v:
                     self.travel_time_hr[(u, v)] = 0.0
@@ -66,9 +67,10 @@ class TourDataset:
                     lat2, lon2 = self.poi_coords[v]
                     t_hr = haversine_km(lat1, lon1, lat2, lon2) / WALKING_SPEED_KMH
                     self.travel_time_hr[(u, v)] = t_hr
-                    all_walk_times.append(t_hr)
-        self.mean_walk_time_hr = float(np.mean(all_walk_times))
-        self.min_walk_time_hr = float(np.min(all_walk_times))
+                    dists_u.append(t_hr)
+            neighbor_walk_times.extend(sorted(dists_u)[:4])
+        self.mean_walk_time_hr = float(np.mean(neighbor_walk_times))
+        self.min_walk_time_hr = float(np.min(neighbor_walk_times))
 
     def get_trajectories_by_split(self, split: str = "test") -> list[dict]:
         """Returns list of trajectory dicts for the given split."""
