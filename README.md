@@ -90,6 +90,12 @@ PYTHONPATH=. python3 run_demo.py
 ```
 Runs the end-to-end Edinburgh 5-hour Museum query (`Princes Street Gardens -> ... -> Calton Hill`), prints the CSP pruning trace (`BT` vs. `BT+FC` vs. `BT+FC+AC-3`), candidate pattern evaluations, the optimal itinerary (`Park -> Historical -> Cultural -> Museum -> Cafe -> Park`, `4.91h`), the `NN ON` vs. `NN OFF` comparison, the tight-budget fallback (`2.40h` budget warning reporting the smallest working budget `4.85h`), and saves `outputs/figures/demo_cooperation.png`.
 
+### Step 3b — Interactive Web GUI (`app.py`)
+```bash
+streamlit run app.py
+```
+Launches an interactive browser dashboard with real-time Edinburgh map routing, customizable start/end places, time budgets, stops count, CSP pruning visualization, and NN ablation.
+
 ### Step 4 — Run the Automated Test Suite (5 Normal, 3 Edge, 2 Impossible + Unit Tests)
 ```bash
 PYTHONPATH=. python3 tests/test_all.py

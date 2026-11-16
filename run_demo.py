@@ -172,7 +172,7 @@ def main() -> None:
     plt.rcParams.update({"font.size": 10.0, "axes.titlesize": 11.0, "axes.labelsize": 10.0})
     fig, axes = plt.subplots(1, 3, figsize=(9.6, 3.3), constrained_layout=True)
 
-    csp_labels = ["BT Only", "BT + FC", "BT + FC + AC-3"]
+    csp_labels = ["BT Only", "BT + FC", "BT+FC+AC-3"]
     bt_vals = []
     asgn_vals = []
     for _, u_fc, u_ac3 in csp_modes:
