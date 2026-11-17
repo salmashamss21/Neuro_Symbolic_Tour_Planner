@@ -1,5 +1,6 @@
 """Optional interactive Edinburgh itinerary interface (Streamlit)."""
 import streamlit as st
+import pydeck as pdk
 
 from tourplan import csp, data, integration, nn
 
@@ -37,9 +38,51 @@ if run:
     st.write(result.message)
     if result.itinerary is not None:
         st.code(integration.format_plan(city, result))
-        idx = result.itinerary.places
-        route = city.pois.iloc[idx][["lat", "lon"]].rename(columns={"lat": "latitude", "lon": "longitude"})
-        st.map(route)
+        route = city.pois.iloc[result.itinerary.places][["poi_id", "category", "lat", "lon"]].copy()
+        route = route.reset_index(drop=True)
+        route["stop"] = route.index + 1
+        coordinates = route[["lon", "lat"]].values.tolist()
+        center_lat = float(route["lat"].mean())
+        center_lon = float(route["lon"].mean())
+
+        route_layer = pdk.Layer(
+            "PathLayer",
+            data=[{"path": coordinates}],
+            get_path="path",
+            get_color=[37, 99, 235, 230],
+            get_width=7,
+            width_scale=20,
+            width_min_pixels=4,
+            pickable=False,
+        )
+        stop_layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=route,
+            get_position="[lon, lat]",
+            get_fill_color=[220, 38, 38, 230],
+            get_line_color=[255, 255, 255, 255],
+            get_radius=55,
+            radius_min_pixels=7,
+            radius_max_pixels=14,
+            line_width_min_pixels=1,
+            pickable=True,
+            auto_highlight=True,
+        )
+        st.pydeck_chart(
+            pdk.Deck(
+                layers=[route_layer, stop_layer],
+                initial_view_state=pdk.ViewState(
+                    latitude=center_lat,
+                    longitude=center_lon,
+                    zoom=12,
+                    pitch=0,
+                ),
+                map_style=None,
+                tooltip={"html": "<b>Stop {stop}</b> · POI {poi_id}<br/>{category}"},
+            ),
+            use_container_width=True,
+        )
+        st.caption("The blue line connects the planned stops in order; it is not street-by-street walking directions.")
     else:
         st.info("Try a larger time budget, fewer stops, or another must-see category.")
     left, right = st.columns(2)

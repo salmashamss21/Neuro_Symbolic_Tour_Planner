@@ -50,6 +50,8 @@ python -m pip install -r requirements-app.txt
 streamlit run app.py
 ```
 
+After selecting **Plan itinerary**, the map draws a blue line through the stops in order. The line connects POIs directly and does not represent street-level walking directions.
+
 ## Modules
 
 The `data/`, `nn/`, `search/`, `csp/`, `integration/`, and `eval/` packages provide clearly named facades. The canonical implementation lives in `tourplan/` to keep the tested modules together.
