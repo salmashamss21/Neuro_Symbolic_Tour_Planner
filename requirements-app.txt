@@ -1,0 +1,2 @@
+# Optional browser interface; install core pinned requirements first.
+streamlit>=1.30.0

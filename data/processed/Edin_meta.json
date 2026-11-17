@@ -1,0 +1,17 @@
+{
+ "city": "Edin",
+ "n_raw_places": 28,
+ "n_raw_visits": 7853,
+ "n_places": 25,
+ "n_visits": 7828,
+ "n_users": 1448,
+ "n_trajs": 5009,
+ "n_transitions": 2819,
+ "min_visits": 20,
+ "max_places": 60,
+ "min_dur_s": 300,
+ "max_dur_s": 14400,
+ "local_hour_offset": 11.0,
+ "walk_kmh": 4.5,
+ "detour": 1.3
+}

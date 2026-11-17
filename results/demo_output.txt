@@ -1,0 +1,77 @@
+
+==============================================================================
+1. INPUT
+==============================================================================
+city Edinburgh | start place 7 [Park] | end place 10 [Park]
+budget 300 min | must-see: Museum | 6 stops | start 10:00
+
+==============================================================================
+2. NN  (trained on real Flickr trajectories, user-split)
+==============================================================================
+NN next-place   test NLL 2.593  top-1 0.225  top-3 0.463
+Markov counts   test NLL 2.535  top-1 0.251  top-3 0.519
+
+==============================================================================
+3. CSP: category patterns (BT vs BT+FC vs BT+FC+AC-3)
+==============================================================================
+BT         patterns  192 | assignments   1443 | backtracks    957 | checks   3898 | revisions     0 |    0.9 ms
+BT+FC      patterns  192 | assignments    554 | backtracks     68 | checks   5439 | revisions     0 |    2.3 ms
+BT+FC+AC3  patterns  192 | assignments    511 | backtracks     25 | checks   5608 | revisions   315 |    2.7 ms
+domains before propagation: [['Park'], 'all', 'all', 'all', 'all', ['Park']]
+domains after FC + AC-3   : [['Park'], ['Cultural', 'Entertainment', 'Historical', 'Museum', 'Structure'], ['Cultural', 'Entertainment', 'Historical', 'Museum', 'Park', 'Structure'], ['Cultural', 'Entertainment', 'Historical', 'Museum', 'Park', 'Structure'], ['Cultural', 'Entertainment', 'Historical', 'Museum', 'Structure'], ['Park']]
+
+top-10 patterns (by category-transition likelihood):
+   1. Park -> Historical -> Structure -> Museum -> Structure -> Park
+   2. Park -> Structure -> Museum -> Structure -> Historical -> Park
+   3. Park -> Structure -> Historical -> Museum -> Structure -> Park
+   4. Park -> Historical -> Museum -> Structure -> Historical -> Park
+   5. Park -> Structure -> Cultural -> Museum -> Structure -> Park
+   6. Park -> Museum -> Structure -> Historical -> Structure -> Park
+   7. Park -> Structure -> Museum -> Cultural -> Structure -> Park
+   8. Park -> Museum -> Structure -> Cultural -> Structure -> Park
+   9. Park -> Structure -> Historical -> Structure -> Museum -> Park
+  10. Park -> Historical -> Museum -> Cultural -> Structure -> Park
+
+==============================================================================
+4. SEARCH on the best pattern (UCS vs A* vs Greedy)
+==============================================================================
+ucs     cost  15.858 | expanded   331 | generated  1112 | max open  781
+astar   cost  15.858 | expanded    12 | generated    62 | max open   50
+greedy  cost  16.526 | expanded     5 | generated    28 | max open   23
+
+A* search trace (first 12 expansions):  n  pos  place  elapsed   g      h      f=g+h
+     1    0      7      11    0.00  13.68   13.68
+     2    1      8      59    4.78   9.34   14.12
+     3    2     15      71    6.92   7.81   14.73
+     4    3     16      80    9.35   5.63   14.97
+     5    1      1      77    4.75  10.30   15.06
+     6    2     29      99    6.40   8.67   15.06
+     7    3      3     122    9.17   5.97   15.15
+     8    4     19      98   12.35   2.95   15.30
+     9    4     19     143   12.58   2.95   15.52
+    10    3     16     110   10.07   5.63   15.70
+    11    4     23     146   13.94   1.85   15.79
+    12    4      4     154   13.15   2.67   15.81
+
+==============================================================================
+5. FULL PLAN (CSP -> search -> duration check)
+==============================================================================
+Itinerary found (10 pattern(s) tried).
+pattern: Park -> Museum -> Structure -> Cultural -> Structure -> Park
+  1. 10:00  place  7 [Park]  stay  11 min
+  2. 10:42  place  3 [Museum]  stay  16 min
+  3. 11:05  place 29 [Structure]  stay  17 min
+  4. 11:27  place  9 [Cultural]  stay  16 min
+  5. 11:49  place 19 [Structure]  stay  10 min
+  6. 12:07  place 10 [Park]  stay   9 min
+total 136 min (walking 57 min)
+patterns tried: 10, rejected for budget: 0
+
+==============================================================================
+6. NN ON vs OFF
+==============================================================================
+NN ON : 7 -> 3 -> 29 -> 9 -> 19 -> 10 | avg NN log-prob/step -2.32
+NN OFF: 7 -> 3 -> 17 -> 9 -> 23 -> 10 | walking 50 min (ON: 57 min)
+plausibility cost under the NN (lower = more typical): ON 14.47  vs  OFF 15.46
+
+figure written to figures/demo.png

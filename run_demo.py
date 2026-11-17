@@ -1,291 +1,175 @@
-#!/usr/bin/env python3
-"""Integrated Demo Script (`python run_demo.py`).
+#!/usr/bin/env python
+"""Integrated demo:  python run_demo.py [--seed 0] [--n-stops 6] [--budget 300] [--must Museum]
 
-Demonstrates:
-1. Input query (Edinburgh, 5.0 hours budget, 6 stops: Park -> ... -> Park, must include a Museum,
-   starting at Princes Street Gardens [POI 4] and ending at Calton Hill [POI 5] at 10:00 AM).
-2. How the three modules cooperate:
-   - Part 1 (CSP): Generates up to 10 valid category patterns with BT+FC+AC-3 and compares
-     pruning counts with and without FC/AC-3.
-   - Part 2 (Heuristic Search): Runs A* (and compares against UCS and Greedy) to ground each
-     category pattern into the most plausible sequence of real Edinburgh landmarks.
-   - Part 3 (Two-Head Neural Network): Supplies time-aware transition probabilities P(next | cur, hour)
-     and predicts visit durations (with comparison of NN ON vs. NN OFF / Popularity fallback).
-3. Fallback demonstration when budget is too tight (e.g., 2.4 hours for 6 stops), reporting the
-   exact minimum working budget and returning the cheapest itinerary with a warning.
-4. Saves a 3-panel visual cooperation figure (`outputs/figures/demo_cooperation.png`).
+Prints the request, the CSP patterns, the search trace and the final itinerary, compares the
+system with the NN on and off, and writes figures/demo.png showing how CSP, search and NN cooperate.
 """
+import argparse
+import time
 
-from __future__ import annotations
-
-import json
-from pathlib import Path
-import matplotlib.pyplot as plt
 import numpy as np
 
-from data.loader import TourDataset
-from integration.pipeline import IntegratedTourPlanner
-from nn.train import train_and_evaluate
+from tourplan import csp as C
+from tourplan import data as D
+from tourplan import integration as I
+from tourplan import nn
+from tourplan import search as S
 
 
-def format_clock(hour_float: float) -> str:
-    total_min = int(round(hour_float * 60)) % (24 * 60)
-    h = total_min // 60
-    m = total_min % 60
-    return f"{h:02d}:{m:02d}"
+def banner(t):
+    print("\n" + "=" * 78 + f"\n{t}\n" + "=" * 78)
 
 
-def main() -> None:
-    print("=" * 78)
-    print("P6: PLAUSIBLE TOUR ITINERARIES — INTEGRATED DEMO (CSP + SEARCH + TWO-HEAD NN)")
-    print("=" * 78)
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--n-stops", type=int, default=6)
+    ap.add_argument("--budget", type=float, default=300, help="minutes")
+    ap.add_argument("--must", default="Museum")
+    ap.add_argument("--start-id", type=int, default=7, help="poiID of the start place (default: a park)")
+    ap.add_argument("--end-id", type=int, default=10, help="poiID of the end place (default: another park)")
+    ap.add_argument("--hour", type=float, default=10.0)
+    ap.add_argument("--no-plots", action="store_true")
+    a = ap.parse_args()
 
-    dataset = TourDataset("data")
-    nn_model, markov_base, pop_base, nn_eval = train_and_evaluate(
-        dataset, seed=42, epochs=55, batch_size=64, lr=0.004, save_dir="outputs/models"
-    )
-    planner = IntegratedTourPlanner(dataset, nn_model, markov_base, pop_base)
+    cd = D.get_city("Edin")
+    id2idx = dict(zip(cd.pois.poi_id, cd.pois.poi_idx))
+    models = nn.train_all(cd, a.seed)
+    prior = C.category_prior(cd, models["data"]["tr_t"])
+    nnb = models["bundles"]["NN"]
+    req = I.Request(int(id2idx[a.start_id]), int(id2idx[a.end_id]), a.budget, a.must, a.n_stops, a.hour)
 
-    start_poi = 4   # Princes Street Gardens (Park)
-    end_poi = 5     # Calton Hill (Park)
-    budget_hr = 5.0
-    must_see = "Museum"
-    num_stops = 6
-    start_hour = 10.0
+    banner("1. INPUT")
+    print(f"city Edinburgh | start place {a.start_id} [{cd.pois.category[req.start]}] | end place {a.end_id} "
+          f"[{cd.pois.category[req.end]}]\nbudget {a.budget:.0f} min | must-see: {a.must} | {a.n_stops} stops | "
+          f"start {a.hour:02.0f}:00")
 
-    print("\n[1] INPUT QUERY")
-    print(f"  City             : Edinburgh ({len(dataset.poi_ids)} POIs across {len(dataset.categories)} categories)")
-    print(f"  Start Place      : {dataset.poi_names[start_poi]} (ID={start_poi}, Category={dataset.poi_categories[start_poi]})")
-    print(f"  End Place        : {dataset.poi_names[end_poi]} (ID={end_poi}, Category={dataset.poi_categories[end_poi]})")
-    print(f"  Time Budget      : {budget_hr:.2f} hours (Start Time: {format_clock(start_hour)})")
-    print(f"  Number of Stops  : {num_stops} stops")
-    print(f"  Must-See Category: {must_see}")
+    banner("2. NN  (trained on real Flickr trajectories, user-split)")
+    te = models["data"]["te_t"]
+    for k, lab in (("nn_next", "NN next-place"), ("markov", "Markov counts")):
+        m = nn.next_metrics(models[k], te)
+        print(f"{lab:15s} test NLL {m['nll']:.3f}  top-1 {m['top1']:.3f}  top-3 {m['top3']:.3f}")
 
-    print("\n[2] CSP CATEGORY-PATTERN GENERATION & PRUNING TRACE")
-    csp_modes = [
-        ("Backtracking Only (BT)", False, False),
-        ("BT + Forward Checking (FC)", True, False),
-        ("BT + FC + Arc Consistency (AC-3)", True, True),
-    ]
-    for label, u_fc, u_ac3 in csp_modes:
-        pats, st = planner.csp.solve(
-            num_stops=num_stops,
-            start_category=dataset.poi_categories[start_poi],
-            end_category=dataset.poi_categories[end_poi],
-            must_see_category=must_see,
-            budget_hr=budget_hr,
-            use_fc=u_fc,
-            use_ac3=u_ac3,
-            max_solutions=10,
-        )
-        print(
-            f"  {label:<34} -> Patterns: {len(pats):2d} | "
-            f"Assignments: {st.assignments:4d} | Backtracks: {st.backtracks:4d} | Pruned Values: {st.pruned_values:4d}"
-        )
+    banner("3. CSP: category patterns (BT vs BT+FC vs BT+FC+AC-3)")
+    prob = C.build_csp(cd, nnb, req.start, req.end, req.n_stops, req.must_cat, req.budget_min, prior=prior)
+    csp_stats = {}
+    for name, kw in [("BT", {}), ("BT+FC", dict(fc=True)), ("BT+FC+AC3", dict(fc=True, ac3=True))]:
+        t = time.perf_counter()
+        sols, st = C.solve(prob, **kw)
+        csp_stats[name] = st
+        print(f"{name:10s} patterns {len(sols):4d} | assignments {st.assignments:6d} | backtracks {st.backtracks:6d} "
+              f"| checks {st.checks:6d} | revisions {st.revisions:5d} | {1000 * (time.perf_counter() - t):6.1f} ms")
+    doms0, _ = C.root_domains(prob)
+    doms1, _ = C.root_domains(prob, fc=True, ac3=True)
+    print("domains before propagation:", [[cd.categories[c] for c in sorted(d)] if len(d) < 6 else "all" for d in doms0])
+    print("domains after FC + AC-3   :", [[cd.categories[c] for c in sorted(d)] for d in doms1])
+    top = C.rank_patterns(sols, prior, 10)
+    print("\ntop-10 patterns (by category-transition likelihood):")
+    for k, pt in enumerate(top, 1):
+        print(f"  {k:2d}. {' -> '.join(I.pattern_names(cd, pt))}")
 
-    out_nn = planner.plan_tour(
-        start_poi=start_poi,
-        end_poi=end_poi,
-        time_budget_hr=budget_hr,
-        must_see_category=must_see,
-        num_stops=num_stops,
-        start_hour=start_hour,
-        search_algo="astar",
-        use_fc=True,
-        use_ac3=True,
-        cost_mode="nn",
-        max_patterns=10,
-    )
+    banner("4. SEARCH on the best pattern (UCS vs A* vs Greedy)")
+    pb = S.SearchProblem(cd, nnb, req.start, req.end, top[0], req.start_hour, req.budget_min)
+    srch = {}
+    for algo in ("ucs", "astar", "greedy"):
+        tr = []
+        it, st = S.search(pb, algo, trace=tr)
+        srch[algo] = (it, st, tr)
+        print(f"{algo:7s} cost {it.cost:7.3f} | expanded {st.expanded:5d} | generated {st.generated:5d} "
+              f"| max open {st.max_open:4d}")
+    print("\nA* search trace (first 12 expansions):  n  pos  place  elapsed   g      h      f=g+h")
+    for r in srch["astar"][2][:12]:
+        print(f"   {r['n']:3d}  {r['pos']:3d}  {int(cd.pois.poi_id[r['place']]):5d}  {r['elapsed']:6d}  "
+              f"{r['g']:6.2f} {r['h']:6.2f} {r['g'] + r['h']:7.2f}")
 
-    print("\n[3] CANDIDATE PATTERNS EVALUATED BY HEURISTIC SEARCH (A*) + NN DURATION CHECK")
-    for idx, ev in enumerate(out_nn.pattern_evaluations, start=1):
-        pat_str = " -> ".join(ev["pattern"])
-        status_tag = "ACCEPTED" if ev["accepted"] else "REJECTED (> Budget)"
-        print(
-            f"  Pattern {idx:2d}: {pat_str:<54} | "
-            f"CSP Exp: {ev['expected_csp_time_hr']:.2f}h | NN Pred: {ev['predicted_nn_time_hr']:.2f}h | "
-            f"Cost: {ev['total_cost']:.2f} | Expanded: {ev['nodes_expanded']:2d} | [{status_tag}]"
-        )
+    banner("5. FULL PLAN (CSP -> search -> duration check)")
+    plan = I.plan(cd, nnb, req, prior)
+    print(I.format_plan(cd, plan))
+    print(f"patterns tried: {len(plan.patterns_tried)}, rejected for budget: "
+          f"{sum(1 for _, c, _ in plan.patterns_tried if c is None)}")
 
-    best = out_nn.best_itinerary
-    assert best is not None
-    print("\n[4] BEST RETURNED ITINERARY (NN ON + A* + BT+FC+AC-3)")
-    print(f"  Status           : {out_nn.status.upper()} — {out_nn.message}")
-    print(f"  Category Pattern : {' -> '.join(best.categories)}")
-    print(f"  Total Time       : {best.total_time_hr:.2f} hours ({best.total_time_hr * 60:.1f} min) / {budget_hr:.2f}h budget")
-    print(f"  Total Search Cost: {best.total_cost:.4f} (Search Nodes Expanded: {out_nn.total_search_stats.nodes_expanded}, Generated: {out_nn.total_search_stats.nodes_generated})")
-    print("-" * 78)
-    print(f"  {'Stop':<5} {'Arrival':<8} {'Depart':<8} {'Visit(m)':<9} {'Walk(m)':<8} {'Category':<11} {'Landmark Name'}")
-    print("-" * 78)
-    for i, pid in enumerate(best.pois):
-        arr_h = best.arrival_hours[i]
-        vis_h = best.visit_durations_hr[i]
-        dep_h = arr_h + vis_h
-        walk_m = best.travel_times_hr[i] * 60.0 if i < len(best.travel_times_hr) else 0.0
-        print(
-            f"  #{i+1:<4} {format_clock(arr_h):<8} {format_clock(dep_h):<8} "
-            f"{vis_h*60:6.1f}m   {walk_m:5.1f}m   {best.categories[i]:<11} {dataset.poi_names[pid]}"
-        )
-    print("-" * 78)
+    banner("6. NN ON vs OFF")
+    plan_off = I.plan(cd, models["bundles"]["Off"], req, prior)
+    print("NN ON :", " -> ".join(f"{int(cd.pois.poi_id[p])}" for p in plan.itinerary.places),
+          f"| avg NN log-prob/step {-plan.itinerary.nll / (req.n_stops - 1):.2f}")
+    # evaluate both itineraries under the SAME (NN) model
+    pbc = S.SearchProblem(cd, nnb, req.start, req.end, plan_off.pattern, req.start_hour, None)
+    g_off, _ = S.path_cost(pbc, plan_off.itinerary.places)
+    print("NN OFF:", " -> ".join(f"{int(cd.pois.poi_id[p])}" for p in plan_off.itinerary.places),
+          f"| walking {plan_off.itinerary.travel_min:.0f} min (ON: {plan.itinerary.travel_min:.0f} min)")
+    print(f"plausibility cost under the NN (lower = more typical): ON {plan.itinerary.cost:.2f}  vs  OFF {g_off:.2f}")
 
-    out_off = planner.plan_tour(
-        start_poi=start_poi,
-        end_poi=end_poi,
-        time_budget_hr=budget_hr,
-        must_see_category=must_see,
-        num_stops=num_stops,
-        start_hour=start_hour,
-        search_algo="astar",
-        use_fc=True,
-        use_ac3=True,
-        cost_mode="popularity",
-        max_patterns=10,
-    )
-    best_off = out_off.best_itinerary
-    assert best_off is not None
-    nn_solver = planner._build_search_solver(cost_mode="nn")
-    off_true_cost = sum(
-        nn_solver.step_cost(best_off.pois[i], best_off.pois[i + 1], int(best_off.arrival_hours[i] + best_off.visit_durations_hr[i]) % 24)
-        for i in range(len(best_off.pois) - 1)
-    )
-    print("\n[5] ABLATION: SYSTEM WITH NEURAL NETWORK ON vs. OFF")
-    print(f"  NN ON  Route : {' -> '.join(dataset.poi_names[p] for p in best.pois)}")
-    print(f"                 Plausibility Cost (NLL + Walk): {best.total_cost:.3f} | Predicted Time: {best.total_time_hr:.2f}h")
-    print(f"  NN OFF Route : {' -> '.join(dataset.poi_names[p] for p in best_off.pois)}")
-    print(f"                 Plausibility Cost (NLL + Walk): {off_true_cost:.3f} | Static Time   : {best_off.total_time_hr:.2f}h")
+    if not a.no_plots:
+        make_plot(cd, req, plan, plan_off, csp_stats, srch, top, prior)
+        print("\nfigure written to figures/demo.png")
 
-    tight_budget = 2.4
-    out_tight = planner.plan_tour(
-        start_poi=start_poi,
-        end_poi=end_poi,
-        time_budget_hr=tight_budget,
-        must_see_category=must_see,
-        num_stops=num_stops,
-        start_hour=start_hour,
-    )
-    print("\n[6] IMPOSSIBLE / TIGHT BUDGET FALLBACK DEMO (Budget = 2.40h for 6 stops)")
-    print(f"  Status : {out_tight.status.upper()}")
-    print(f"  Message: {out_tight.message}")
 
-    fig_dir = Path("outputs/figures")
-    fig_dir.mkdir(parents=True, exist_ok=True)
-    plt.rcParams.update({"font.size": 10.0, "axes.titlesize": 11.0, "axes.labelsize": 10.0})
-    fig, axes = plt.subplots(1, 3, figsize=(9.6, 3.3), constrained_layout=True)
-
-    csp_labels = ["BT Only", "BT + FC", "BT+FC+AC-3"]
-    bt_vals = []
-    asgn_vals = []
-    for _, u_fc, u_ac3 in csp_modes:
-        _, st = planner.csp.solve(
-            num_stops=num_stops,
-            start_category=dataset.poi_categories[start_poi],
-            end_category=dataset.poi_categories[end_poi],
-            must_see_category=must_see,
-            budget_hr=budget_hr,
-            use_fc=u_fc,
-            use_ac3=u_ac3,
-            max_solutions=10,
-        )
-        bt_vals.append(st.backtracks)
-        asgn_vals.append(st.assignments)
-
-    x_c = np.arange(len(csp_labels))
-    axes[0].bar(x_c - 0.18, asgn_vals, 0.36, label="Assignments", color="#1e3a5f")
-    axes[0].bar(x_c + 0.18, bt_vals, 0.36, label="Backtracks", color="#d97706")
-    axes[0].set_title("1. CSP Pruning (6-Stop Query)")
-    axes[0].set_xticks(x_c)
-    axes[0].set_xticklabels(csp_labels)
-    axes[0].set_ylabel("Count")
-    axes[0].grid(True, axis="y", linestyle="--", alpha=0.4)
-    axes[0].legend(loc="upper right")
-
-    pat_ids = [f"P{i}" for i in range(1, len(out_nn.pattern_evaluations) + 1)]
-    csp_times = [ev["expected_csp_time_hr"] for ev in out_nn.pattern_evaluations]
-    nn_times = [ev["predicted_nn_time_hr"] for ev in out_nn.pattern_evaluations]
-    x_p = np.arange(len(pat_ids))
-    axes[1].bar(x_p - 0.18, csp_times, 0.36, label="CSP Expected Time", color="#64748b")
-    bar_colors = ["#0f766e" if ev["accepted"] else "#b91c1c" for ev in out_nn.pattern_evaluations]
-    axes[1].bar(x_p + 0.18, nn_times, 0.36, label="NN Predicted Time", color=bar_colors)
-    axes[1].axhline(budget_hr, color="#b91c1c", linestyle="--", linewidth=1.8, label=f"Budget ({budget_hr:.1f}h)")
-    axes[1].set_title("2. CSP Filter vs. NN Duration Check")
-    axes[1].set_xticks(x_p)
-    axes[1].set_xticklabels(pat_ids)
-    axes[1].set_ylabel("Total Tour Time (Hours)")
-    axes[1].grid(True, axis="y", linestyle="--", alpha=0.4)
-    axes[1].legend(loc="upper left", fontsize=8.5)
-
-    lats = [dataset.poi_coords[p][0] for p in best.pois]
-    lons = [dataset.poi_coords[p][1] for p in best.pois]
-    all_lats = [dataset.poi_coords[p][0] for p in dataset.poi_ids]
-    all_lons = [dataset.poi_coords[p][1] for p in dataset.poi_ids]
-    axes[2].scatter(all_lons, all_lats, color="#cbd5e1", s=28, label="Other Edinburgh POIs", zorder=2)
-    axes[2].plot(lons, lats, color="#0f766e", linewidth=2.2, marker="o", markersize=7, label="Best Plausible Route", zorder=4)
-    for idx_stop, (lon_v, lat_v, pid) in enumerate(zip(lons, lats, best.pois), start=1):
-        short_name = dataset.poi_names[pid].split()[0]
-        axes[2].annotate(
-            f"{idx_stop}:{short_name}",
-            (lon_v, lat_v),
-            textcoords="offset points",
-            xytext=(4, 5 if idx_stop % 2 == 1 else -10),
-            fontsize=8.0,
-            weight="bold",
-            color="#0f172a",
-        )
-    axes[2].set_title("3. Selected Edinburgh Sightseeing Route")
-    axes[2].set_xlabel("Longitude (°E)")
-    axes[2].set_ylabel("Latitude (°N)")
-    axes[2].grid(True, linestyle="--", alpha=0.4)
-    axes[2].legend(loc="lower left", fontsize=8.5)
-
-    out_fig = fig_dir / "demo_cooperation.png"
-    fig.savefig(out_fig, dpi=220, bbox_inches="tight")
-    plt.close(fig)
-    print(f"\n[7] SAVED COOPERATION PLOT -> {out_fig}")
-
-    demo_record = {
-        "query": {
-            "city": "Edinburgh",
-            "start_poi": start_poi,
-            "start_name": dataset.poi_names[start_poi],
-            "end_poi": end_poi,
-            "end_name": dataset.poi_names[end_poi],
-            "budget_hr": budget_hr,
-            "must_see": must_see,
-            "num_stops": num_stops,
-            "start_hour": start_hour,
-        },
-        "csp_comparison": {
-            "BT": {"assignments": asgn_vals[0], "backtracks": bt_vals[0]},
-            "BT+FC": {"assignments": asgn_vals[1], "backtracks": bt_vals[1]},
-            "BT+FC+AC3": {"assignments": asgn_vals[2], "backtracks": bt_vals[2]},
-        },
-        "best_itinerary": {
-            "pois": best.pois,
-            "poi_names": [dataset.poi_names[p] for p in best.pois],
-            "categories": best.categories,
-            "arrival_times": [format_clock(h) for h in best.arrival_hours],
-            "visit_durations_min": [round(d * 60.0, 1) for d in best.visit_durations_hr],
-            "walk_times_min": [round(w * 60.0, 1) for w in best.travel_times_hr],
-            "total_time_hr": round(best.total_time_hr, 2),
-            "total_cost": round(best.total_cost, 4),
-            "nodes_expanded": out_nn.total_search_stats.nodes_expanded,
-            "nodes_generated": out_nn.total_search_stats.nodes_generated,
-        },
-        "nn_on_vs_off": {
-            "nn_on_cost": round(best.total_cost, 4),
-            "nn_off_cost_under_nn": round(off_true_cost, 4),
-            "nn_on_route": [dataset.poi_names[p] for p in best.pois],
-            "nn_off_route": [dataset.poi_names[p] for p in best_off.pois],
-        },
-        "tight_budget_fallback": {
-            "requested_budget_hr": tight_budget,
-            "status": out_tight.status,
-            "minimum_working_budget_hr": out_tight.minimum_working_budget_hr,
-            "message": out_tight.message,
-        },
-    }
-    with open("outputs/demo_output.json", "w", encoding="utf-8") as f:
-        json.dump(demo_record, f, indent=2)
+def make_plot(cd, req, plan, plan_off, csp_stats, srch, top, prior):
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    plt.rcParams.update({"font.size": 8, "axes.spines.top": False, "axes.spines.right": False})
+    fig = plt.figure(figsize=(12, 7.2))
+    gs = fig.add_gridspec(2, 3, hspace=0.45, wspace=0.35)
+    pal = dict(zip(cd.categories, ["#4C78A8", "#B279A2", "#E45756", "#F58518", "#54A24B", "#9D9D9D"]))
+    # map
+    ax = fig.add_subplot(gs[0, 0])
+    for c in cd.categories:
+        m = cd.pois.category == c
+        ax.scatter(cd.pois.lon[m], cd.pois.lat[m], s=22, color=pal[c], label=c, zorder=3)
+    for it, ls, lab in ((plan.itinerary, "-", "NN on"), (plan_off.itinerary, "--", "NN off")):
+        xs = [cd.pois.lon[p] for p in it.places]; ys = [cd.pois.lat[p] for p in it.places]
+        ax.plot(xs, ys, ls, color="k" if ls == "-" else "gray", lw=1.2, zorder=2, label=lab)
+    for k, p in enumerate(plan.itinerary.places):
+        ax.annotate(str(k + 1), (cd.pois.lon[p], cd.pois.lat[p]), xytext=(3, 3), textcoords="offset points", fontsize=8, weight="bold")
+    ax.set_title("Itinerary on the map"); ax.set_xlabel("lon"); ax.set_ylabel("lat"); ax.legend(fontsize=6, frameon=False, ncol=2)
+    # timeline
+    ax = fig.add_subplot(gs[0, 1:])
+    it = plan.itinerary
+    for k, (p, ar, sy) in enumerate(zip(it.places, it.arrive, it.stay)):
+        ax.barh(0, sy, left=ar / 60 * 60, color=pal[cd.pois.category[p]], height=0.5)
+        ax.text(ar + sy / 2, 0, str(k + 1), ha="center", va="center", fontsize=8, color="white", weight="bold")
+    t_end = it.arrive[-1] + it.stay[-1]
+    t_bud = req.start_hour * 60 + req.budget_min
+    ax.set_xlim(it.arrive[0] - 10, max(t_end, min(t_bud, t_end + 60)) + 15)
+    if t_bud <= ax.get_xlim()[1]:
+        ax.axvline(t_bud, color="r", ls=":", lw=1)
+        ax.text(t_bud, 0.3, " budget", color="r", fontsize=7)
+    ticks = ax.get_xticks()
+    ax.set_xticks(ticks); ax.set_xticklabels([f"{int(t // 60) % 24:02d}:{int(t % 60):02d}" for t in ticks])
+    ax.set_yticks([]); ax.set_xlabel("clock time  (bars = NN-predicted stay, gaps = walking)")
+    ax.set_title("Timeline with NN-predicted visit durations"); ax.spines["left"].set_visible(False)
+    # CSP counters
+    ax = fig.add_subplot(gs[1, 0])
+    names = list(csp_stats); x = np.arange(len(names))
+    ax.bar(x - 0.2, [csp_stats[n].assignments for n in names], 0.4, label="assignments", color="#4C78A8")
+    ax.bar(x + 0.2, [csp_stats[n].backtracks for n in names], 0.4, label="backtracks", color="#E45756")
+    ax.set_xticks(x); ax.set_xticklabels(names); ax.set_yscale("log"); ax.legend(frameon=False)
+    ax.set_title("CSP effort for this request")
+    # search nodes
+    ax = fig.add_subplot(gs[1, 1])
+    al = ["ucs", "astar", "greedy"]
+    ax.bar(np.arange(3) - 0.2, [srch[a][1].expanded for a in al], 0.4, label="expanded", color="#4C78A8")
+    ax.bar(np.arange(3) + 0.2, [srch[a][1].generated for a in al], 0.4, label="generated", color="#F58518")
+    ax.set_xticks(range(3))
+    ax.set_xticklabels([f"{n}\ncost {srch[a][0].cost:.1f}" for n, a in zip(["UCS", "A*", "Greedy"], al)])
+    ax.legend(frameon=False)
+    ax.set_title("Search effort (top pattern)")
+    # cooperation: pattern costs
+    ax = fig.add_subplot(gs[1, 2])
+    tried = plan.patterns_tried
+    costs = [c if c is not None else np.nan for _, c, _ in tried]
+    ax.bar(range(len(tried)), [0 if np.isnan(c) else c for c in costs],
+           color=["#54A24B" if (not np.isnan(c)) else "#BBBBBB" for c in costs])
+    for i, c in enumerate(costs):
+        if np.isnan(c):
+            ax.text(i, 0.3, "rej.", rotation=90, ha="center", fontsize=7)
+    best = np.nanargmin(costs) if not all(np.isnan(costs)) else None
+    if best is not None:
+        ax.bar(best, costs[best], color="#F58518")
+    ax.set_xlabel("pattern rank (CSP)"); ax.set_ylabel("search cost")
+    ax.set_title("CSP patterns -> search cost (orange = chosen)")
+    fig.savefig(D.ROOT / "figures" / "demo.png", dpi=160, bbox_inches="tight")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,137 @@
+commit 38a650a
+Date:   2026-11-17 02:09:35 +0200
+Author: Basmala (project team)
+
+    README: explain place indices in the Python example
+
+
+ README.md | 1 +
+ 1 file changed, 1 insertion(+)
+commit 50cbc82
+Date:   2026-11-17 02:09:11 +0200
+Author: Basmala (project team)
+
+    Add README, report, presentation script and contribution template
+
+
+ README.md                   |  65 +++++++++++++++
+ docs/CONTRIBUTIONS.md       |  25 ++++++
+ docs/PRESENTATION_SCRIPT.md |  33 ++++++++
+ docs/REPORT.md              | 188 ++++++++++++++++++++++++++++++++++++++++++++
+ docs/REPORT.pdf             | Bin 0 -> 378609 bytes
+ 5 files changed, 311 insertions(+)
+commit a121665
+Date:   2026-11-17 02:09:11 +0200
+Author: Basmala (project team)
+
+    Add experiments (NN comparison, UCS/A*/Greedy, BT/FC/AC-3, F1 vs real) with 10 seeds and results
+
+
+ figures/exp1_search.png         |  Bin 0 -> 85397 bytes
+ figures/exp2_csp.png            |  Bin 0 -> 100248 bytes
+ figures/exp3_f1.png             |  Bin 0 -> 26729 bytes
+ figures/nn_training.png         |  Bin 0 -> 77139 bytes
+ results/exp1_search_raw.csv     | 2251 +++++++++++++++++
+ results/exp1_search_summary.csv |   16 +
+ results/exp2_csp_raw.csv        | 5251 +++++++++++++++++++++++++++++++++++++++
+ results/exp2_csp_summary.csv    |   22 +
+ results/exp3_f1_raw.csv         | 3701 +++++++++++++++++++++++++++
+ results/exp3_f1_summary.csv     |    5 +
+ results/experiments_log.txt     |   64 +
+ results/nn_duration_summary.csv |    4 +
+ results/nn_next_summary.csv     |    4 +
+ results/nn_results_per_seed.csv |   61 +
+ results/run_info.json           |    1 +
+ run_experiments.py              |  221 ++
+ 16 files changed, 11601 insertions(+)
+commit 82a190d
+Date:   2026-11-17 02:09:11 +0200
+Author: Basmala (project team)
+
+    Add integrated demo with search trace, CSP pruning and NN on/off comparison
+
+
+ figures/demo.png        | Bin 0 -> 122786 bytes
+ results/demo_output.txt |  77 +++++++++++++++++++++
+ run_demo.py             | 176 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 253 insertions(+)
+commit a2cbd08
+Date:   2026-11-17 02:09:11 +0200
+Author: Basmala (project team)
+
+    Add tests: CSP, search (known answer + brute force), planner (normal/edge/impossible)
+
+
+ tests/conftest.py     | 35 +++++++++++++++++++
+ tests/test_csp.py     | 95 +++++++++++++++++++++++++++++++++++++++++++++++++++
+ tests/test_planner.py | 81 +++++++++++++++++++++++++++++++++++++++++++
+ tests/test_search.py  | 89 +++++++++++++++++++++++++++++++++++++++++++++++
+ 4 files changed, 300 insertions(+)
+commit 4e66e8a
+Date:   2026-11-17 02:09:11 +0200
+Author: Basmala (project team)
+
+    Add integrated planner: CSP -> search -> budget check, exact smallest budget, no-solution messages
+
+
+ tourplan/evaluation.py  |  46 ++++++++++++++
+ tourplan/integration.py | 166 ++++++++++++++++++++++++++++++++++++++++++++++++
+ 2 files changed, 212 insertions(+)
+commit 49c80b4
+Date:   2026-11-17 02:09:11 +0200
+Author: Basmala (project team)
+
+    Add UCS/A*/Greedy itinerary search with DP heuristic, counters and brute force checker
+
+
+ tourplan/search.py | 261 +++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 261 insertions(+)
+commit f49f87e
+Date:   2026-11-17 02:09:11 +0200
+Author: Basmala (project team)
+
+    Add category-pattern CSP with BT, forward checking and AC-3 plus counters
+
+
+ tourplan/csp.py | 262 ++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 262 insertions(+)
+commit 1e168fd
+Date:   2026-11-17 02:09:11 +0200
+Author: Basmala (project team)
+
+    Add NumPy next-place and duration networks with Markov/popularity/mean baselines
+
+
+ tourplan/nn.py | 384 +++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+ 1 file changed, 384 insertions(+)
+commit 06bfcc6
+Date:   2026-11-17 02:09:11 +0200
+Author: Basmala (project team)
+
+    Add Flickr data: raw Edinburgh files, checksums, preprocessing, make_data.py, data dictionary
+
+
+ .gitignore                            |    3 +
+ data/processed/Edin_meta.json         |   17 +
+ data/processed/Edin_places.csv        |   26 +
+ data/processed/Edin_splits_seed0.json |    1 +
+ data/processed/Edin_travel_min.npy    |  Bin 0 -> 5128 bytes
+ data/processed/Edin_visits.csv        | 7829 ++++++++++++++++++++++++++++++++
+ data/raw/CHECKSUMS.json               |   12 +
+ data/raw/UPSTREAM_README.md           |   53 +
+ data/raw/poi-Edin.csv                 |   29 +
+ data/raw/poi-Glas.csv                 |   28 +
+ data/raw/poi-Melb.csv                 |   89 +
+ data/raw/poi-Osak.csv                 |   28 +
+ data/raw/poi-Toro.csv                 |   30 +
+ data/raw/traj-Edin.csv                | 7854 +++++++++++++++++++++++++++++++++
+ data/raw/traj-Glas.csv                | 2750 ++++++++++++
+ data/raw/traj-Melb.csv                | 7247 ++++++++++++++++++++++++++++++
+ data/raw/traj-Osak.csv                | 1373 ++++++
+ data/raw/traj-Toro.csv                | 7608 +++++++++++++++++++++++++++++++
+ docs/DATA_DICTIONARY.md               |   81 +
+ make_data.py                          |   48 +
+ requirements.txt                      |    5 +
+ tourplan/__init__.py                  |    2 +
+ tourplan/data.py                      |  230 +
+ 23 files changed, 35343 insertions(+)
