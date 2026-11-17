@@ -52,6 +52,12 @@ streamlit run app.py
 
 After selecting **Plan itinerary**, the map draws a blue line through the stops in order. The line connects POIs directly and does not represent street-level walking directions.
 
+## Accounts
+
+The app provides self-service registration, sign-in, and sign-out. Usernames are unique and case-insensitive. Passwords must be 12–128 characters; only per-account salted PBKDF2-HMAC-SHA-256 verifiers are stored, using 600,000 iterations. Passwords are never written to the account database in plaintext. This follows OWASP's current PBKDF2 guidance ([Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)).
+
+By default, accounts are stored in `users.sqlite3` beside the app. That database is excluded from Git. For a deployment, set `TOUR_PLANNER_AUTH_DB` to a writable, persistent database path; a temporary/ephemeral filesystem can lose accounts when the deployment restarts or is rebuilt. This self-contained account store does not provide email verification, password recovery, or administrator account management.
+
 ## Modules
 
 The `data/`, `nn/`, `search/`, `csp/`, `integration/`, and `eval/` packages provide clearly named facades. The canonical implementation lives in `tourplan/` to keep the tested modules together.

@@ -2,7 +2,14 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
+import os
 from pathlib import Path
+import re
+import secrets
+import sqlite3
+from datetime import datetime, timezone
 
 import pandas as pd
 import pydeck as pdk
@@ -12,6 +19,8 @@ from tourplan import csp, data, integration, nn
 
 
 ROOT = Path(__file__).resolve().parent
+AUTH_DB_PATH = Path(os.environ.get("TOUR_PLANNER_AUTH_DB", ROOT / "users.sqlite3")).expanduser()
+PASSWORD_ITERATIONS = 600_000
 CATEGORY_COLORS = {
     "Park": [34, 197, 94, 210],
     "Historical": [234, 88, 12, 210],
@@ -35,6 +44,131 @@ def load_system(seed: int):
 def format_clock(minutes: float) -> str:
     value = int(round(minutes)) % (24 * 60)
     return f"{value // 60:02d}:{value % 60:02d}"
+
+
+def _password_hash(password: str, salt: bytes) -> bytes:
+    return hashlib.pbkdf2_hmac(
+        "sha256", password.encode("utf-8"), salt, PASSWORD_ITERATIONS, dklen=32
+    )
+
+
+def _open_auth_db():
+    AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    return sqlite3.connect(AUTH_DB_PATH, timeout=15)
+
+
+def _initialize_auth_db() -> None:
+    with _open_auth_db() as db:
+        db.execute("PRAGMA journal_mode=WAL")
+        db.execute(
+            """CREATE TABLE IF NOT EXISTS users (
+                username TEXT PRIMARY KEY COLLATE NOCASE,
+                salt BLOB NOT NULL,
+                password_hash BLOB NOT NULL,
+                created_at TEXT NOT NULL
+            )"""
+        )
+
+
+def _validate_username(username: str) -> tuple[str | None, str | None]:
+    username = username.strip()
+    if not 3 <= len(username) <= 32:
+        return None, "Use a username between 3 and 32 characters."
+    if re.fullmatch(r"[A-Za-z0-9_.-]+", username) is None:
+        return None, "Usernames may contain letters, numbers, periods, underscores, and hyphens."
+    return username, None
+
+
+def _create_account(username: str, password: str) -> tuple[bool, str]:
+    normalized, error = _validate_username(username)
+    if error:
+        return False, error
+    if not 12 <= len(password) <= 128:
+        return False, "Use a password between 12 and 128 characters."
+
+    salt = secrets.token_bytes(16)
+    verifier = _password_hash(password, salt)
+    try:
+        with _open_auth_db() as db:
+            db.execute(
+                "INSERT INTO users (username, salt, password_hash, created_at) VALUES (?, ?, ?, ?)",
+                (normalized, salt, verifier, datetime.now(timezone.utc).isoformat()),
+            )
+    except sqlite3.IntegrityError:
+        return False, "That username is already registered. Choose another one."
+    except sqlite3.Error:
+        return False, "Account storage is unavailable. Please try again later."
+    return True, normalized
+
+
+def _verify_account(username: str, password: str) -> str | None:
+    normalized, _ = _validate_username(username)
+    try:
+        with _open_auth_db() as db:
+            row = None if normalized is None else db.execute(
+                "SELECT username, salt, password_hash FROM users WHERE username = ?",
+                (normalized,),
+            ).fetchone()
+    except sqlite3.Error:
+        return None
+
+    # Do a same-cost derivation for unknown usernames to make account discovery harder.
+    salt = row[1] if row else bytes(16)
+    expected = row[2] if row else bytes(32)
+    candidate = _password_hash(password[:128], salt)
+    matches = hmac.compare_digest(candidate, expected)
+    return row[0] if row and len(password) <= 128 and matches else None
+
+
+def _render_auth_gate() -> None:
+    try:
+        _initialize_auth_db()
+    except (OSError, sqlite3.Error):
+        st.error("Account storage could not be opened. Check the deployment's writable database path.")
+        st.stop()
+
+    if st.session_state.get("auth_username"):
+        return
+
+    left, auth_column, right = st.columns([1, 1.2, 1])
+    with auth_column:
+        st.markdown('<div class="planner-kicker">P6 · Neuro-symbolic planning</div>', unsafe_allow_html=True)
+        st.markdown('<div class="planner-title">Welcome to Edinburgh</div>', unsafe_allow_html=True)
+        st.markdown('<div class="planner-subtitle">Sign in or create an account to plan a tour.</div>', unsafe_allow_html=True)
+        sign_in_tab, register_tab = st.tabs(["Sign in", "Create account"])
+
+        with sign_in_tab:
+            with st.form("sign_in_form"):
+                username = st.text_input("Username", autocomplete="username")
+                password = st.text_input("Password", type="password", autocomplete="current-password")
+                submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True)
+            if submitted:
+                account = _verify_account(username, password)
+                if account:
+                    st.session_state["auth_username"] = account
+                    st.rerun()
+                st.error("Username or password is incorrect.")
+
+        with register_tab:
+            with st.form("create_account_form"):
+                new_username = st.text_input("Choose a username", autocomplete="username")
+                new_password = st.text_input("Create a password", type="password", autocomplete="new-password")
+                confirm_password = st.text_input("Confirm password", type="password", autocomplete="new-password")
+                st.caption("Usernames: 3–32 letters, numbers, periods, underscores, or hyphens. Passwords: 12–128 characters.")
+                submitted = st.form_submit_button("Create account", type="primary", use_container_width=True)
+            if submitted:
+                if new_password != confirm_password:
+                    st.error("The passwords do not match.")
+                else:
+                    created, result = _create_account(new_username, new_password)
+                    if created:
+                        st.session_state["auth_username"] = result
+                        st.rerun()
+                    st.error(result)
+
+        st.caption("Passwords are stored as salted PBKDF2 hashes, never plaintext.")
+        st.caption("Accounts use a local SQLite file. See the README before deploying on an ephemeral host.")
+    st.stop()
 
 
 def route_rows(city, itinerary):
@@ -93,6 +227,8 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+_render_auth_gate()
+
 st.markdown('<div class="planner-kicker">P6 · Neuro-symbolic planning</div>', unsafe_allow_html=True)
 st.markdown('<div class="planner-title">Edinburgh Tour Planner</div>', unsafe_allow_html=True)
 st.markdown(
@@ -102,6 +238,14 @@ st.markdown(
 )
 
 with st.sidebar:
+    st.caption(f"Signed in as **{st.session_state['auth_username']}**")
+    if st.button("Sign out", use_container_width=True):
+        st.session_state.pop("auth_username", None)
+        st.session_state.pop("planner_result", None)
+        st.session_state.pop("csp_comparison", None)
+        st.session_state.pop("model_comparison", None)
+        st.rerun()
+    st.divider()
     st.header("🧭 Tour request")
     seed = st.number_input("Model seed", min_value=0, max_value=9999, value=0, step=1)
     city, models, prior = load_system(int(seed))
