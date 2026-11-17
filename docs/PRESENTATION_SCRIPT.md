@@ -8,20 +8,20 @@ Slides: the "P6 Plausible Tour Itineraries" deck (Slides artifact; also exportab
 | 0:00 | 1 Title / problem | tourist gives start, end, budget, must-see → plausible route that fits time |
 | 1:00 | 2 Three parts | NN = what is plausible; CSP = which category pattern; Search = which real places |
 | 2:00 | 3 Data | tour-cikm16, Edinburgh, 25 places, 2 819 transitions; durations noisy (68 % < 5 min); generated parts |
-| 3:00 | 4 NN | two heads; vs Markov: **tie** on NLL, duration slightly better |
+| 3:00 | 4 NN and transition accuracy | context counts reach 27.0% Top-1 vs 23.5% for the NN; Top-3 reaches 51.1% |
 | 4:00 | 5 CSP | variables/constraints; BT vs FC vs AC-3 |
-| 5:00 | 6 Search | state/action/cost; DP heuristic; A* optimal |
+| 5:00 | 6 Search | state includes previous and current stop; DP heuristic; A* optimal |
 | 6:00 | 7 Integration | 10 patterns → search → budget check → exact smallest budget / warning |
 | 7:00 | 8 Exp 1 | A* 27× fewer nodes than UCS; Greedy cheap but 5–40 % optimal |
 | 8:00 | 9 Exp 2 | FC/AC-3: 10×/36× fewer backtracks but 3× slower in Python |
-| 8:45 | 10 Exp 3 | F1: NN .525, Markov .512, Popularity .453, no model .439 |
-| 9:30 | 11 Limits & conclusion | small noisy data, NN ≈ counts, generated inputs |
+| 8:45 | 10 Exp 3 | F1: NN .525, Markov .512, context counts .509, Popularity .453, no model .439 |
+| 9:30 | 11 Limits & conclusion | context helps, but exact next-place prediction remains difficult on sparse Flickr data |
 
 ## Live demo (5 min) — all commands run from the project folder
 1. **Whole system, with search trace and CSP pruning** (≈ 2 min): `python run_demo.py`
    Point at: section 3 (BT vs FC vs AC-3 counters and domains), section 4 (UCS/A*/Greedy counters + A* trace f = g + h),
    section 5 (itinerary), `figures/demo.png`.
-2. **NN on vs off** (≈ 1 min): section 6 of the same output (walking minutes, plausibility cost under the NN).
+2. **Model comparison** (about 1 min): choose "Neural network (best held-out route F1)" for the route demo, then compare with "Context-aware counts (higher next-place Top-1)". The CLI demo shows NN-on versus NN-off in section 6.
 3. **Different request** (≈ 1 min): `python run_demo.py --n-stops 7 --budget 240 --must Historical --hour 9 --no-plots`
 4. **Failure messages** (≈ 1 min), in a Python shell:
    ```python

@@ -34,6 +34,8 @@ def exp_nn(cd, models):
         te, tr = r["data"]["te_t"], r["data"]["tr_t"]
         for name, m in [("NN", r["nn_next"]), ("Markov (counts)", r["markov"]), ("Popularity", r["pop"])]:
             rows.append(dict(seed=seed, task="next place", model=name, **nn.next_metrics(m, te)))
+        rows.append(dict(seed=seed, task="next place", model="Context Markov",
+                         **nn.context_metrics(r["context_markov"], r["data"]["te_ctx"])))
         ted = r["data"]["te_d"]
         for name, m in [("NN", r["nn_dur"]), ("Per-place mean", r["mean_dur"]), ("Global mean", r["glob_dur"])]:
             rows.append(dict(seed=seed, task="duration", model=name, **nn.duration_metrics(m, ted)))
@@ -121,7 +123,7 @@ def exp_f1(cd, models, seeds):
         prior = C.category_prior(cd, r["data"]["tr_t"])
         trajs = D.trajectories(cd.visits, r["split"]["test"], min_len=3)
         reqs = E.requests_from_trajectories(cd, trajs, np.random.default_rng(3000 + seed))
-        for name in ("NN", "Markov", "Popularity", "Off"):
+        for name in ("NN", "Markov", "Context Markov", "Popularity", "Off"):
             b = r["bundles"][name]
             for t, req in reqs:
                 pl = I.plan(cd, b, req, prior)
@@ -175,11 +177,13 @@ def plots(cd, models, e1, e2, e3, nn_per_seed):
     ax[0].legend(frameon=False)
     fig.tight_layout(); fig.savefig(FIG / "exp2_csp.png", dpi=160); plt.close(fig)
     # exp3
-    order = ["NN", "Markov", "Popularity", "Off"]
-    lab = {"NN": "NN costs", "Markov": "Markov counts", "Popularity": "Popularity", "Off": "No model (travel only)"}
+    order = ["NN", "Markov", "Context Markov", "Popularity", "Off"]
+    lab = {"NN": "NN costs", "Markov": "Markov counts", "Context Markov": "Context counts",
+           "Popularity": "Popularity", "Off": "No model (travel only)"}
     fig, ax = plt.subplots(figsize=(5.2, 3.2))
     m = e3.groupby("model")["f1_mid"].agg(["mean", "std"]).loc[order]
-    ax.bar([lab[o] for o in order], m["mean"], yerr=m["std"], capsize=3, color=["#F58518", "#4C78A8", "#54A24B", "#B279A2"])
+    ax.bar([lab[o] for o in order], m["mean"], yerr=m["std"], capsize=3,
+           color=["#F58518", "#4C78A8", "#72B7B2", "#54A24B", "#B279A2"])
     ax.set_ylabel("F1 on intermediate stops"); plt.setp(ax.get_xticklabels(), rotation=15)
     fig.tight_layout(); fig.savefig(FIG / "exp3_f1.png", dpi=160); plt.close(fig)
     # training curves (seed 0)

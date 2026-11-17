@@ -300,12 +300,18 @@ with st.sidebar:
             format_func={"astar": "A* Search", "ucs": "Uniform Cost Search", "greedy": "Greedy Best-First"}.__getitem__,
         )
         csp_mode = st.selectbox("CSP pruning", ["BT + FC + AC-3", "BT + FC", "Backtracking only"])
-        cost_model = st.selectbox("Route cost model", ["Neural network", "Markov counts", "Popularity", "No model"])
+        cost_model = st.selectbox(
+            "Route cost model",
+            ["Neural network (best held-out route F1)",
+             "Context-aware counts (higher next-place Top-1)",
+             "Markov counts", "Popularity", "No model"],
+        )
     solve = st.button("🚀 Plan tour", type="primary", use_container_width=True)
 
 if solve:
     bundle_key = {
-        "Neural network": "NN",
+        "Neural network (best held-out route F1)": "NN",
+        "Context-aware counts (higher next-place Top-1)": "Context Markov",
         "Markov counts": "Markov",
         "Popularity": "Popularity",
         "No model": "Off",
@@ -496,7 +502,8 @@ with tabs[2]:
             int(start), int(end), budget_hours * 60, must_category, int(num_stops), float(start_hour)
         )
         compare_rows = []
-        for label, key in [("Neural network", "NN"), ("Markov counts", "Markov"),
+        for label, key in [("Context-aware counts", "Context Markov"),
+                           ("Neural network", "NN"), ("Markov counts", "Markov"),
                            ("Popularity", "Popularity"), ("No model", "Off")]:
             plan = integration.plan(city, models["bundles"][key], req, prior)
             it = plan.itinerary
@@ -551,6 +558,11 @@ with tabs[4]:
         score = nn.next_metrics(models[key], test)
         metrics.append({"Model": label, "Test NLL": score["nll"],
                         "Top-1 accuracy": score["top1"], "Top-3 accuracy": score["top3"]})
+    context_score = nn.context_metrics(models["context_markov"], models["data"]["te_ctx"])
+    metrics.insert(0, {"Model": "Context-aware counts (uses previous stop)",
+                       "Test NLL": context_score["nll"],
+                       "Top-1 accuracy": context_score["top1"],
+                       "Top-3 accuracy": context_score["top3"]})
     st.dataframe(pd.DataFrame(metrics), use_container_width=True, hide_index=True)
     duration = nn.duration_metrics(models["nn_dur"], models["data"]["te_d"])
     st.metric("Duration model MAE", f"{duration['mae_min']:.1f} min")

@@ -3,6 +3,7 @@
 An end-to-end Edinburgh tour planner that combines three methods:
 
 - **Neural network:** predicts the next place and expected visit duration from Flickr trajectories.
+- **Context-aware transition model:** predicts the next place from the previous and current stops, backing off to first-order counts when a pair is rare.
 - **CSP:** selects a valid category pattern using backtracking (BT), forward checking (FC), and AC-3.
 - **Search:** selects real places using UCS, A*, or Greedy, with counters and a brute-force oracle for small cases.
 
@@ -35,7 +36,7 @@ python -m pytest -q tests
 python run_experiments.py --city Edin --seeds 10
 ```
 
-The demo prints the request, NN baseline metrics, CSP pruning counters, search trace, integrated itinerary, and NN-on/off comparison. It saves cooperation plots in `figures/`. Experiment outputs (raw runs, mean ± standard deviation tables, and plots) are in `results/` and `figures/`.
+The demo prints the request, NN baseline metrics, CSP pruning counters, search trace, integrated itinerary, and NN-on/off comparison. The Streamlit planner defaults to the NN because it had the best held-out itinerary F1. Context-aware transition counts are available for higher next-place Top-1 accuracy; first-order Markov, popularity, and no-model options are also available. It saves cooperation plots in `figures/`. Experiment outputs (raw runs, mean ± standard deviation tables, and plots) are in `results/` and `figures/`.
 
 Try a different request:
 
@@ -65,7 +66,7 @@ The `data/`, `nn/`, `search/`, `csp/`, `integration/`, and `eval/` packages prov
 | Module | Responsibility |
 |---|---|
 | `data/` and `tourplan/data.py` | Download, preprocessing, checksums, city data, splits, training samples |
-| `nn/` and `tourplan/nn.py` | Next-place and duration networks; Markov, popularity, and duration baselines |
+| `nn/` and `tourplan/nn.py` | Next-place and duration networks; first/second-order Markov, popularity, and duration baselines |
 | `csp/` and `tourplan/csp.py` | Category-pattern constraints; BT, FC, AC-3 and counters |
 | `search/` and `tourplan/search.py` | UCS, A*, Greedy, brute-force oracle and search counters |
 | `integration/` and `tourplan/integration.py` | CSP → search → duration validation and budget fallback |
@@ -84,6 +85,6 @@ The `data/`, `nn/`, `search/`, `csp/`, `integration/`, and `eval/` packages prov
 
 ## Reproducibility and interpretation
 
-The Edinburgh results in the report were produced with the included source and ten seeds (0–9). The datasets are based on Flickr photo trajectories; photo timestamps are noisy duration proxies. Walking speed, clock correction, requested stop counts, budgets, and must-see categories are documented generated assumptions. The report also discusses that the learned next-place model is statistically close to the count-based Markov baseline on this small dataset.
+The Edinburgh results in the report were produced with the included source and ten seeds (0–9). The datasets are based on Flickr photo trajectories; photo timestamps are noisy duration proxies. Walking speed, clock correction, requested stop counts, budgets, and must-see categories are documented generated assumptions. Next-place Top-1 remains limited by the small, sparse dataset; the context model is stronger than the one-step NN and first-order counts, but should not be described as highly accurate.
 
 The attached GitHub project and archive were both supplied as reference material. The archived implementation is used as the reproducible core because it includes raw source data, a multi-city-capable data pipeline, report, experimental artifacts, and contribution template. The interactive interface is adapted to this implementation rather than importing incompatible data assumptions from the GitHub version.

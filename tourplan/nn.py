@@ -239,6 +239,75 @@ class MarkovCounts:
         return np.repeat(m[None], n_buckets, axis=0)
 
 
+class ContextMarkovCounts:
+    """Smoothed second-order transitions P(next | previous, current).
+
+    Sparse previous/current pairs back off to a validation-smoothed first-order
+    Markov model. The backoff strength is selected on validation Top-1 accuracy.
+    """
+    name = "Context Markov"
+    ALPHAS = (0.5, 1, 2, 5, 10, 20, 50, 100)
+
+    def __init__(self, n_places: int):
+        self.P = n_places
+        self.base = MarkovCounts(n_places)
+        self.trigram = np.zeros((n_places, n_places, n_places), dtype=float)
+        self.alpha = 10.0
+
+    def fit(self, train, context_train, val, context_val):
+        self.base.fit(train, val)
+        prev, cur, _, nxt = context_train
+        valid = prev >= 0
+        np.add.at(self.trigram, (prev[valid], cur[valid], nxt[valid]), 1.0)
+        for i in range(self.P):
+            self.trigram[:, i, i] = 0.0
+
+        vprev, vcur, vhour, vnxt = context_val
+        self.alpha = max(
+            self.ALPHAS,
+            key=lambda alpha: self._top1(vprev, vcur, vhour, vnxt, alpha),
+        )
+        return self
+
+    def _probabilities(self, alpha):
+        bigram = np.exp(self.base._logp_mat(self.base.alpha))
+        out = np.empty((self.P + 1, self.P, self.P), dtype=float)
+        out[self.P] = bigram  # sentinel previous place: first-order backoff
+        totals = self.trigram.sum(axis=2, keepdims=True)
+        out[:self.P] = (self.trigram + alpha * bigram[None, :, :]) / (totals + alpha)
+        for previous in range(self.P):
+            for current in range(self.P):
+                if totals[previous, current, 0] == 0:
+                    out[previous, current] = bigram[current]
+        return out
+
+    def _top1(self, prev, cur, hour, nxt, alpha):
+        probabilities = self._probabilities(alpha)
+        prev_idx = np.where(prev < 0, self.P, prev)
+        scores = probabilities[prev_idx, cur].copy()
+        scores[np.arange(len(cur)), cur] = -1.0
+        return float((scores.argmax(axis=1) == nxt).mean())
+
+    def logp_context(self, prev, cur, hour=None):
+        probabilities = self._probabilities(self.alpha)
+        prev = np.asarray(prev, dtype=int)
+        cur = np.asarray(cur, dtype=int)
+        prev_idx = np.where(prev < 0, self.P, prev)
+        return np.log(np.maximum(probabilities[prev_idx, cur], 1e-300))
+
+    def logp(self, cur, hour=None):
+        return self.logp_context(np.full(len(cur), -1), cur, hour)
+
+    def nll(self, cur, hour, nxt):
+        lp = self.logp(cur, hour)
+        return float(-lp[np.arange(len(nxt)), nxt].mean())
+
+    def table(self, n_buckets=N_BUCKETS):
+        probs = self._probabilities(self.alpha)
+        lp = np.log(np.maximum(probs, 1e-300))
+        return np.repeat(lp[None, :, :, :], n_buckets, axis=0)
+
+
 class Popularity:
     """P(next=j) proportional to how often j was visited as a next place (ignores current)."""
     name = "Popularity"
@@ -312,6 +381,15 @@ def next_metrics(model, data) -> dict:
                 top3=float((top[:, :3] == nxt[:, None]).any(1).mean()))
 
 
+def context_metrics(model, data) -> dict:
+    prev, cur, hour, nxt = data
+    lp = model.logp_context(prev, cur, hour)
+    top = np.argsort(-lp, axis=1)
+    return dict(nll=float(-lp[np.arange(len(nxt)), nxt].mean()),
+                top1=float((top[:, 0] == nxt).mean()),
+                top3=float((top[:, :3] == nxt[:, None]).any(1).mean()))
+
+
 def duration_metrics(model, data) -> dict:
     place, hour, y = data
     pred = model.predict_log(place, hour)
@@ -346,20 +424,28 @@ def train_all(cd, seed: int, quick: bool = False):
     from . import data as D
     sp = D.split_users(cd.visits, seed)
     tr_t, va_t, te_t = (D.transitions(cd.visits, sp[k]) for k in ("train", "val", "test"))
+    tr_ctx, va_ctx, te_ctx = (
+        D.context_transitions(cd.visits, sp[k]) for k in ("train", "val", "test")
+    )
     tr_d, va_d, te_d = (D.duration_samples(cd.visits, sp[k]) for k in ("train", "val", "test"))
     P = cd.n_places
     kw = dict(max_epochs=40) if quick else {}
     nn_next = NextPlaceNet(P, seed=seed, **kw).fit(tr_t, va_t)
     nn_dur = DurationNet(P, seed=seed, **kw).fit(tr_d, va_d)
     markov = MarkovCounts(P).fit(tr_t, va_t)
+    context_markov = ContextMarkovCounts(P).fit(tr_t, tr_ctx, va_t, va_ctx)
     pop = Popularity(P).fit(tr_t)
     mean_dur = MeanDuration(P).fit(tr_d)
     glob_dur = GlobalMeanDuration(P).fit(tr_d)
-    return dict(split=sp, data=dict(tr_t=tr_t, va_t=va_t, te_t=te_t, tr_d=tr_d, va_d=va_d, te_d=te_d),
-                nn_next=nn_next, nn_dur=nn_dur, markov=markov, pop=pop, mean_dur=mean_dur,
+    return dict(split=sp, data=dict(tr_t=tr_t, va_t=va_t, te_t=te_t,
+                                    tr_ctx=tr_ctx, va_ctx=va_ctx, te_ctx=te_ctx,
+                                    tr_d=tr_d, va_d=va_d, te_d=te_d),
+                nn_next=nn_next, nn_dur=nn_dur, markov=markov,
+                context_markov=context_markov, pop=pop, mean_dur=mean_dur,
                 glob_dur=glob_dur,
                 bundles={"NN": ModelBundle("NN", nn_next, nn_dur),
                          "Markov": ModelBundle("Markov", markov, mean_dur),
+                         "Context Markov": ModelBundle("Context Markov", context_markov, mean_dur),
                          "Popularity": ModelBundle("Popularity", pop, mean_dur),
                          "NN-trans+MeanDur": ModelBundle("NN-trans+MeanDur", nn_next, mean_dur),
                          "Off": ModelBundle("Off", UniformTrans(P), glob_dur)})

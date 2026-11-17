@@ -212,6 +212,23 @@ def transitions(visits: pd.DataFrame, users: set | None = None):
             nxt[m].to_numpy().astype(int))
 
 
+def context_transitions(visits: pd.DataFrame, users: set | None = None):
+    """(previous_place, current_place, hour_leaving_current, next_place).
+
+    The first transition in a trajectory has previous_place=-1 and backs off to
+    the first-order current-place model.
+    """
+    v = visits if users is None else visits[visits["user"].isin(users)]
+    v = v.sort_values(["traj", "pos_in_traj"])
+    group = v.groupby("traj")["poi_idx"]
+    prev, nxt = group.shift(1), group.shift(-1)
+    m = nxt.notna()
+    return (prev[m].fillna(-1).to_numpy().astype(int),
+            v.loc[m, "poi_idx"].to_numpy().astype(int),
+            v.loc[m, "hour_end"].to_numpy().astype(float),
+            nxt[m].to_numpy().astype(int))
+
+
 def duration_samples(visits: pd.DataFrame, users: set | None = None):
     """(place, arrival hour, log clipped duration in seconds) for every visit."""
     v = visits if users is None else visits[visits["user"].isin(users)]

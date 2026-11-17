@@ -62,7 +62,9 @@ class SearchProblem:
         P = self.cd.n_places
         self.n = len(self.pattern)
         self.cats = self.cd.cat_of
-        self.logp = self.bundle.logp_table()               # (B, P, P)
+        self.logp = self.bundle.logp_table()               # (B, P, P) or context-aware (B, P+1, P, P)
+        self.P = P
+        self.contextual = self.logp.ndim == 4
         self.nb = self.logp.shape[0]
         self.stay = np.maximum(5, np.round(self.bundle.dur_table())).astype(int)   # (B, P)
         self.trav = np.round(self.cd.travel_min).astype(int)
@@ -81,10 +83,15 @@ class SearchProblem:
     def stay_at(self, place: int, elapsed: int) -> int:
         return int(self.stay[self.bucket(elapsed), place])
 
-    def step_cost(self, i: int, j: int, depart_elapsed: int):
+    def step_cost(self, i: int, j: int, depart_elapsed: int, prev: int | None = None):
         """cost of moving i->j, leaving i at elapsed minutes. Returns (cost, nll, travel)."""
         tr = int(self.trav[i, j])
-        nll = float(-self.logp[self.bucket(depart_elapsed), i, j])
+        b = self.bucket(depart_elapsed)
+        if self.contextual:
+            previous = self.P if prev is None or prev < 0 else prev
+            nll = float(-self.logp[b, previous, i, j])
+        else:
+            nll = float(-self.logp[b, i, j])
         if self.mode == "time":
             return float(tr), nll, tr        # stay is added separately in 'time' mode
         return nll + self.lam * tr, nll, tr
@@ -94,7 +101,8 @@ class SearchProblem:
         """h[k][i] = lower bound of cost to finish from place i at position k  (k = n-1 -> 0)."""
         P = self.cd.n_places
         n = self.n
-        nll_min = (-self.logp).min(0)                      # min over clock hours, (P, P)
+        nll_min = ((-self.logp).min(axis=(0, 1)) if self.contextual
+                   else (-self.logp).min(0))                # relaxed over hour / prior place
         if self.mode == "time":
             step = self.trav.astype(float)
             stay_min = self.stay.min(0).astype(float)      # (P,)
@@ -131,7 +139,7 @@ class SearchProblem:
         return float(self.stay[:, self.start].min() + self.tl[0][self.start])
 
 
-def _expand(pb: SearchProblem, pos, cur, visited, elapsed, g, nll_acc, trav_acc):
+def _expand(pb: SearchProblem, pos, prev, cur, visited, elapsed, g, nll_acc, trav_acc):
     """Yield successor tuples (place, elapsed', g', nll', trav')."""
     nxt = pb.cands[pos + 1]
     last = (pos + 1 == pb.n - 1)
@@ -141,7 +149,7 @@ def _expand(pb: SearchProblem, pos, cur, visited, elapsed, g, nll_acc, trav_acc)
             continue                      # never "move" to the same place
         if not last and (j in visited or j == pb.end):
             continue                      # intermediate stops: unvisited and not the end place
-        c, nll, tr = pb.step_cost(cur, j, elapsed)
+        c, nll, tr = pb.step_cost(cur, j, elapsed, prev)
         arrive = elapsed + tr
         el2 = arrive + pb.stay_at(j, arrive)
         g2 = g + c + (pb.stay_at(j, arrive) if pb.mode == "time" else 0.0)
@@ -167,7 +175,7 @@ def search(pb: SearchProblem, algo: str = "astar", max_expansions: int = 2_000_0
             return h
         raise ValueError(algo)
 
-    start_state = (0, pb.start, frozenset([pb.start]), s0)
+    start_state = (0, pb.P, pb.start, frozenset([pb.start]), s0)
     # per state: best g seen (exact: state includes elapsed minutes)
     best_g = {start_state: g0}
     parent = {}
@@ -180,23 +188,25 @@ def search(pb: SearchProblem, algo: str = "astar", max_expansions: int = 2_000_0
         f, _, _, st, g, _, _ = heapq.heappop(heap)
         if g > best_g.get(st, np.inf) + 1e-12:
             continue                                      # stale entry
-        pos, cur, visited, elapsed = st
+        pos, prev, cur, visited, elapsed = st
         if pos == pb.n - 1:
             return _rebuild(pb, st, g, info), stats
         stats.expanded += 1
         if trace is not None:
-            trace.append(dict(n=stats.expanded, pos=pos, place=cur, elapsed=elapsed, g=g,
+            trace.append(dict(n=stats.expanded, pos=pos, previous=prev, place=cur, elapsed=elapsed, g=g,
                               h=pb.h_of(pos, cur), open=len(heap)))
         if stats.expanded > max_expansions:
             return None, stats
         _, nll_acc, trav_acc = info[st]
-        for j, el2, g2, nll2, trav2, arrive in _expand(pb, pos, cur, visited, elapsed, g, nll_acc, trav_acc):
+        for j, el2, g2, nll2, trav2, arrive in _expand(
+            pb, pos, prev, cur, visited, elapsed, g, nll_acc, trav_acc
+        ):
             # budget pruning with an admissible bound on the remaining minutes
             if pb.budget is not None and el2 + pb.tl[pos + 1][j] > pb.budget + 1e-9:
                 stats.pruned_budget += 1
                 continue
             v2 = visited | {j} if pos + 1 < pb.n - 1 else visited
-            st2 = (pos + 1, j, v2, el2)
+            st2 = (pos + 1, cur, j, v2, el2)
             if g2 < best_g.get(st2, np.inf) - 1e-12:
                 best_g[st2] = g2
                 info[st2] = (st, nll2, trav2)
@@ -212,18 +222,18 @@ def _rebuild(pb: SearchProblem, goal, g, info) -> Itinerary:
         chain.append(st)
         st = info[st][0]
     chain.reverse()
-    places = [s[1] for s in chain]
+    places = [s[2] for s in chain]
     arrive, stay = [], []
     el = 0
     for k, s in enumerate(chain):
         if k == 0:
             arr = 0
         else:
-            arr = chain[k - 1][3] + int(pb.trav[places[k - 1], places[k]])
+            arr = chain[k - 1][4] + int(pb.trav[places[k - 1], places[k]])
         arrive.append(pb.t0 + arr)
-        stay.append(s[3] - arr)
+        stay.append(s[4] - arr)
     _, nll_acc, trav_acc = info[goal]
-    return Itinerary(places=places, arrive=arrive, stay=stay, total_min=float(chain[-1][3]),
+    return Itinerary(places=places, arrive=arrive, stay=stay, total_min=float(chain[-1][4]),
                      cost=float(g), nll=float(nll_acc), travel_min=float(trav_acc))
 
 
@@ -232,12 +242,14 @@ def path_cost(pb: SearchProblem, places) -> tuple:
     """Exact cost / total minutes of a concrete path under the same model (used for checking)."""
     el = pb.stay_at(places[0], 0)
     g = float(el) if pb.mode == "time" else 0.0
+    previous = pb.P
     for a, b in zip(places[:-1], places[1:]):
-        c, _, tr = pb.step_cost(a, b, el)
+        c, _, tr = pb.step_cost(a, b, el, previous)
         arr = el + tr
         s = pb.stay_at(b, arr)
         el = arr + s
         g += c + (s if pb.mode == "time" else 0.0)
+        previous = a
     return g, el
 
 

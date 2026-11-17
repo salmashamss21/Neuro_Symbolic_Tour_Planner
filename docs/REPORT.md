@@ -38,20 +38,15 @@ experiments are **generated**, not observed.
 
 # 3. Design
 
-## 3.1 Neural networks (`tourplan/nn.py`)
+## 3.1 Neural networks and transition models (`tourplan/nn.py`)
 
-Both heads are small ReLU MLPs written in NumPy with manual back-propagation and Adam (no framework needed).
-Input = one-hot place + sin/cos of the hour (24 h and 12 h harmonics).
-*Next-place head*: 2×64 hidden units, softmax over places with the current place masked (a tourist never "moves" to the
-same place); loss = negative log-likelihood (NLL). *Duration head*: 1×16 hidden units, regression on log seconds (MSE).
-Weight decay 0.01 and the architecture were chosen by validation NLL/MSE on seeds 0–2 (grid of 18 and 9 settings);
-early stopping on validation. Baselines: count-based first-order **Markov** chain (additive smoothing tuned on validation;
-hour-independent), **popularity**, per-place **mean log duration** and the global mean. For the planner the networks are
-turned into look-up tables over 48 half-hour buckets: `logp[b][i][j]` and expected stay minutes `dur[b][i]`.
+Both neural heads are small ReLU MLPs written in NumPy with manual back-propagation and Adam. Input to the next-place NN is a one-hot current place plus sine/cosine hour features (24 h and 12 h harmonics); its softmax masks the current POI. The duration head predicts log visit duration from place and arrival hour. Weight decay 0.01 and architecture were selected on validation data; training uses early stopping.
+
+We compare the NN with popularity and two count models. First-order Markov counts use the current POI. Context Markov uses the previous and current POIs, backs off to first-order counts for unseen pairs, and selects its backoff strength on validation Top-1 accuracy. It is a discrete count model, not a second neural head. This uses a little more route context than the project minimum while keeping the NN's requested input unchanged. The duration baselines are per-place and global means.
 
 ## 3.2 CSP (`tourplan/csp.py`)
 
-Variables $x_0\dots x_{n-1}$ are the categories of the stops; $x_0, x_{n-1}$ are fixed by the start/end place.
+Variables x0 through x(n-1) are the categories of the stops; x0 and x(n-1) are fixed by the start/end place.
 Constraints: neighbours differ (binary), must-see present, per-category cap (≤ 2 and ≤ number of places in the category),
 and total time ≥ lower bound ≤ budget, where the bound adds, per stop, the shortest predicted stay in the category and,
 per link, the shortest walk between categories (so no valid pattern is ever lost; the exact check is made by the search).
@@ -64,14 +59,9 @@ the 10 patterns passed on are the 10 most likely under that category chain.
 
 ## 3.3 Search (`tourplan/search.py`)
 
-State = (position in the plan, current place, visited set, elapsed minutes); action = go to an unvisited place whose
-category is the one the pattern requires next (the last position is forced to the end place). Step cost =
-$-\log P_{NN}(j\mid i,\text{hour on leaving } i) + \lambda\cdot\text{walking minutes}$, $\lambda=0.05$ nats/min (not tuned).
-Stays are whole minutes, $\max(5,\text{round}(\text{predicted}))$; states exceeding the budget are pruned using an
-admissible bound on the remaining minutes. **UCS** orders by $g$, **A\*** by $g+h$, **Greedy** best-first by $h$.
-The heuristic $h$ is an exact backward dynamic programme over positions in a relaxed problem (visited set ignored, cheapest
-clock hour for every step); it is admissible and consistent, so A* is optimal. Counters: nodes expanded/generated, pruned,
-maximum open list. A brute-force enumerator verifies optimality on real-model instances (tests).
+State = (position in the plan, previous place, current place, visited set, elapsed minutes); action = go to an unvisited place whose category is the one the pattern requires next (the last position is forced to be the end place). Step cost is -log P(next | previous, current) + lambda times walking minutes, with lambda = 0.05 nats/min. The Streamlit planner defaults to the neural model because it has the best held-out itinerary F1; context Markov is selectable for stronger exact next-place Top-1. The first transition has no previous POI and backs off to first-order counts.
+
+Stays are whole minutes, max(5, rounded predicted minutes); states exceeding the budget are pruned using an admissible bound on remaining minutes. **UCS** orders by g, **A*** by g+h, and **Greedy** by h. The heuristic is a backward dynamic programme that relaxes the visited set and minimizes each transition over available context/hour values, so it remains admissible. Counters include nodes expanded/generated, pruned, and maximum open list.
 
 ## 3.4 Integration (`tourplan/integration.py`)
 
@@ -89,77 +79,68 @@ could wrongly report "over budget".)
 
 All numbers are mean ± standard deviation over **10 seeds** (each seed = different user split, NN initialisation and generated requests).
 
-## 4.1 Neural networks vs count-based baselines (test users)
+## 4.1 Next-place and duration metrics (held-out users)
 
-| next place | NLL ↓ | top-1 ↑ | top-3 ↑ |
-|---|---|---|---|
-| NN (hour-aware) | 2.566 ± 0.052 | 0.235 ± 0.022 | 0.481 ± 0.030 |
-| Markov counts | **2.551 ± 0.054** | **0.247 ± 0.021** | **0.504 ± 0.030** |
-| Popularity | 2.836 ± 0.037 | 0.139 ± 0.012 | 0.329 ± 0.029 |
+All next-place metrics are mean ± standard deviation across 10 user splits (seeds 0-9). Top-1 means the exact next POI is ranked first; Top-3 means it appears among the first three. The full Edinburgh data has 2,819 transitions before splitting; each held-out test fold contains only a few hundred examples.
 
-| duration (log s) | RMSE ↓ | MAE ↓ | MAE (min) ↓ |
-|---|---|---|---|
+| next-place model | Test NLL (lower) | Top-1 accuracy | Top-3 accuracy |
+|---|---:|---:|---:|
+| Context Markov (previous + current POI) | **2.538 ± 0.049** | **0.270 ± 0.025** | **0.511 ± 0.033** |
+| NN (current POI + hour) | 2.566 ± 0.052 | 0.235 ± 0.022 | 0.481 ± 0.030 |
+| Markov counts (current POI) | 2.551 ± 0.054 | 0.244 ± 0.024 | 0.505 ± 0.029 |
+| Popularity | 2.836 ± 0.037 | 0.139 ± 0.011 | 0.329 ± 0.029 |
+
+The context model raises held-out Top-1 by 3.4 percentage points over the NN and 2.5 points over first-order Markov counts. It reaches 51.1% Top-3, but 27.0% Top-1 is still modest; the model should not be described as highly accurate. The NN remains the learned component required by the project, but it does not outperform counts on next-place prediction.
+
+| duration model | RMSE (log seconds) | MAE (log seconds) | MAE (minutes) |
+|---|---:|---:|---:|
 | NN | **1.214 ± 0.053** | **0.949 ± 0.039** | 27.2 ± 2.9 |
 | per-place mean | 1.226 ± 0.055 | 0.959 ± 0.039 | 27.3 ± 3.0 |
 | global mean | 1.241 ± 0.059 | 0.983 ± 0.039 | 27.4 ± 3.0 |
 
-**The next-place NN does not beat the Markov counts**: NLL is 0.015 ± 0.027 *worse* (paired over seeds, p = 0.12; better in only 2 of 10 seeds).
-Both are far better than popularity, so the current place carries the information; the hour adds little with only about 1 900
-training transitions. The duration NN is slightly but consistently better than the per-place mean (RMSE −0.013 ± 0.010, 9/10 seeds, p = 0.003),
-yet all errors are large because the targets are noisy (§2). Training curves: `figures/nn_training.png`.
+Duration predictions are slightly better than the per-place mean, but still noisy because Flickr photo gaps are an imperfect proxy for time spent at a location. See `figures/nn_training.png` for training curves.
 
-## 4.2 Experiment 1 — UCS vs A* vs Greedy (4–8 stops; 150 requests per size)
+## 4.2 Experiment 1 - UCS vs A* vs Greedy (4-8 stops; 150 requests per size)
 
-| stops | UCS expanded | A\* expanded | Greedy expanded | A\* time (ms) | UCS time (ms) | Greedy cost above optimum | Greedy optimal |
-|---|---|---|---|---|---|---|---|
-| 4 | 21.3 ± 3.0 | 3.7 ± 0.4 | 3.0 | 0.04 | 0.15 | 0.99 ± 0.33 | 40 % |
-| 5 | 71 ± 15 | 6.3 ± 0.7 | 4.0 | 0.08 | 0.49 | 1.82 ± 0.33 | 16 % |
-| 6 | 178 ± 26 | 10.3 ± 1.4 | 5.0 | 0.12 | 1.36 | 2.26 ± 0.42 | 9 % |
-| 7 | 344 ± 97 | 14.6 ± 2.3 | 6.0 | 0.16 | 2.58 | 2.91 ± 0.56 | 5 % |
-| 8 | 796 ± 199 | 29.9 ± 7.5 | 7.0 | 0.31 | 7.29 | 2.64 ± 0.50 | 9 % |
+| stops | UCS expanded | A* expanded | Greedy expanded | A* time (ms) | UCS time (ms) | Greedy cost gap | Greedy optimal |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 4 | 21.3 ± 3.0 | 3.7 ± 0.4 | 3.0 | 0.06 | 0.18 | 0.99 ± 0.33 | 40% |
+| 5 | 71.5 ± 15.3 | 6.3 ± 0.7 | 4.0 | 0.10 | 0.71 | 1.82 ± 0.33 | 16% |
+| 6 | 179.0 ± 26.4 | 10.3 ± 1.4 | 5.0 | 0.16 | 1.97 | 2.26 ± 0.42 | 9% |
+| 7 | 346.6 ± 98.2 | 14.6 ± 2.3 | 6.0 | 0.21 | 3.81 | 2.91 ± 0.56 | 5% |
+| 8 | 801.8 ± 200.7 | 29.9 ± 7.5 | 7.0 | 0.40 | 9.46 | 2.64 ± 0.50 | 9% |
 
-UCS and A* always return the same optimal cost (gap 0 in all 750 requests); A* expands **27× fewer nodes** at 8 stops and the gap
-widens with length. Greedy is fastest (it expands one node per position) but returns a more costly path (about 2–3 nats of cost above the optimum, which combines lower NN likelihood and extra walking)
-and is optimal in only 5–40 % of cases. ![](../figures/exp1_search.png){width=100%}
+UCS and A* agree on the optimum for all 750 requests. At 8 stops A* expands about 27 times fewer nodes. Greedy is fastest, but its path is costlier and optimal in only 5-40% of cases. Timing is environment-dependent; node counts and cost gaps are the more stable comparisons. See `figures/exp1_search.png`.
 
-## 4.3 Experiment 2 — BT vs BT+FC vs BT+FC+AC-3 (full enumeration; 250 requests per size)
+## 4.3 Experiment 2 - BT vs BT+FC vs BT+FC+AC-3 (full enumeration; 250 requests per size)
 
 | stops | variant | assignments | backtracks | time (ms) |
-|---|---|---|---|---|
-| 6 | BT | 1 423 ± 14 | 739 ± 28 | 1.0 |
-| 6 | BT+FC | 759 ± 37 | 74 ± 5 | 3.4 |
-| 6 | BT+FC+AC-3 | 699 ± 33 | 14 ± 5 | 3.8 |
-| 8 | BT | 22 807 ± 1 018 | 14 787 ± 594 | 14 |
-| 8 | BT+FC | 9 421 ± 861 | 1 402 ± 87 | 49 |
-| 8 | BT+FC+AC-3 | 8 435 ± 785 | 416 ± 71 | 54 |
-| 10 | BT | 230 736 ± 19 174 | 189 001 ± 14 803 | 115 |
-| 10 | BT+FC | 54 196 ± 6 066 | 12 460 ± 1 010 | 309 |
-| 10 | BT+FC+AC-3 | 46 322 ± 5 159 | 4 587 ± 500 | 333 |
+|---|---|---:|---:|---:|
+| 6 | BT | 1,423 ± 14 | 739 ± 28 | 1.0 |
+| 6 | BT+FC | 759 ± 37 | 74 ± 5 | 4.6 |
+| 6 | BT+FC+AC-3 | 699 ± 33 | 14 ± 5 | 5.1 |
+| 8 | BT | 22,807 ± 1,018 | 14,787 ± 594 | 21 |
+| 8 | BT+FC | 9,421 ± 861 | 1,402 ± 87 | 65 |
+| 8 | BT+FC+AC-3 | 8,435 ± 785 | 416 ± 71 | 71 |
+| 10 | BT | 230,736 ± 19,174 | 189,001 ± 14,803 | 176 |
+| 10 | BT+FC | 54,196 ± 6,066 | 12,460 ± 1,010 | 409 |
+| 10 | BT+FC+AC-3 | 46,322 ± 5,159 | 4,587 ± 500 | 429 |
 
-Propagation removes most of the search: at 8 stops FC cuts backtracks 10× and AC-3 36× (assignments 2.4× / 2.7×), growing with length.
-**In wall-clock time, however, plain BT is about 3× faster** in this Python implementation: FC and AC-3 evaluate the global rules
-(and re-scan domains) at every node, so the number of constraint checks is *not* lower (0.6–0.7× at 8 stops, i.e. more). The domains are tiny
-(6 categories), so pruning pays off in node counts but not in time; with larger domains or costlier constraints the balance
-would change. The three variants returned identical solution sets in all 1 750 problems. ![](../figures/exp2_csp.png){width=100%}
+At 8 stops forward checking reduces backtracks by about 10 times and AC-3 by about 36 times, while all variants return identical solutions. On this small six-category problem, propagation takes longer in wall-clock time: plain BT is about 3 times faster at 8 stops. See `figures/exp2_csp.png`.
 
-## 4.4 Experiment 3 — NN costs vs Markov vs popularity (F1 against held-out real trajectories)
+## 4.4 Experiment 3 - route costs vs held-out real trajectories
 
-Each test trajectory with 3–8 distinct places and start ≠ end (925 requests over 10 seeds, 92.5 per seed) becomes a request:
-start/end = first/last place, number of stops = its length, must-see = category of a random intermediate stop, budget = max(real span, 30 min × stops),
-start hour = real. F1 is computed on the **intermediate stops** (set overlap; precision = recall because the sets have equal size).
-All variants use the same CSP, the same category prior for ranking patterns, and the same search; only the place-transition costs
-(and stays) differ. "No model" = uniform transition probabilities, i.e. the search only minimises walking.
+Each test trajectory with 3-8 distinct places and different start/end POIs becomes a request (925 requests over 10 seeds, 92.5 per seed): start/end are the first/last POIs, the must-see is a random intermediate category, the budget is at least the real span, and the start hour is real. F1 is measured on intermediate stops by set overlap. All models use the same CSP, category prior, search and duration model; only transition costs differ. "No model" uses uniform transitions and therefore favors short walks.
 
-| cost model | F1 (intermediate) | F1 (all stops) |
-|---|---|---|
+| cost model | F1 (intermediate stops) | F1 (all stops) |
+|---|---:|---:|
 | NN costs | **0.525 ± 0.035** | **0.776 ± 0.015** |
 | Markov counts | 0.512 ± 0.038 | 0.769 ± 0.017 |
+| Context Markov | 0.509 ± 0.045 | 0.768 ± 0.019 |
 | Popularity | 0.453 ± 0.044 | 0.746 ± 0.020 |
 | No model (travel only) | 0.439 ± 0.040 | 0.737 ± 0.019 |
 
-Paired over seeds, NN beats popularity by +0.072 ± 0.032 and the no-model system by +0.086 ± 0.028 (both 10/10 seeds, p < 0.001), but beats Markov by only
-+0.012 ± 0.026 (7/10 seeds, p = 0.17): **learned/sequence-aware costs clearly help; NN versus counts is a tie**, consistent with §4.1.
-In every one of the 3 700 plans the budget was met (the generated budgets are generous). ![](../figures/exp3_f1.png){width=60%}
+Context Markov has the highest next-step Top-1 accuracy, but it does not produce the highest whole-itinerary F1. The NN gives the best average trajectory F1, while first-order and context counts are close. This shows why next-place accuracy and end-to-end route similarity must be reported separately. Every tested plan met its generated budget. See `figures/exp3_f1.png`.
 
 ## 4.5 Tests
 
@@ -170,19 +151,15 @@ agreement of UCS/A* with brute force on real-model instances in two cost modes, 
 
 # 5. Limits
 
-* **Small, noisy data.** 25 places, 2 819 transitions, one city; durations from photo timestamps (68 % below 5 min) make the stay predictions short (typically 8–17 min) and weakly informative; the +11 h clock correction is an assumption.
-* **NN gain is small.** With so little data a hand-built Markov chain is as good; we did not find a configuration that beats it significantly. Hour dependence is weak.
-* **Generated inputs.** Walking speed, budgets, number of stops, must-see categories are ours; F1 is on a filtered subset of trajectories (3–8 distinct places) and the generous budgets mean the time constraint rarely binds in Experiment 3. A random-itinerary F1 baseline was not run.
-* **Shared category prior.** All variants rank patterns with the same training-count prior, which already encodes some plausibility and narrows the NN's effect.
-* **λ = 0.05** (nats per walking minute), the ≤ 10 patterns, and the CSP lower bound were not tuned; the CSP budget bound is weak, so most rejection happens in the search.
-* **Python timing.** Wall-clock results for FC/AC-3 reflect this implementation and the tiny domains.
-* **Not done:** second city (the code supports `--city Toro`), A* tuning beyond the DP heuristic.
+* **Next-place accuracy remains modest.** Context Markov reaches 27.0% Top-1 on held-out users, not a high absolute score. The data contains only 25 Edinburgh POIs and sparse transitions; it omits user preferences, trip purpose, weather, opening hours and route context beyond two stops.
+* **Noisy duration targets.** Visit duration is inferred from photo timestamps; many visits have only one photo. The +11 h clock correction is an assumption.
+* **Generated inputs.** Walking speed, budgets, stop counts and must-see categories are generated. Experiment 3 uses a filtered subset of trajectories, and its budgets rarely bind. A random-itinerary F1 baseline was not run.
+* **Shared category prior.** All route variants rank category patterns with the same training-count prior.
+* **Search settings.** lambda = 0.05, the ten-pattern cap and CSP lower bound were not tuned. FC and AC-3 reduce node counts but cost time for tiny domains.
+* **Scope.** The reported evaluation uses Edinburgh only. The data pipeline supports additional cities, but cross-city accuracy is not established.
 
 # 6. Conclusions
 
-The pipeline works end to end: the CSP gives valid category patterns (and a clear "no solution" reason when none exist), the search turns each into real places with
-optimal NN-based cost (A* is optimal and ≈ 27× cheaper than UCS at 8 stops; Greedy is cheap but rarely optimal), and the duration check either accepts the plan or reports the exact
-smallest feasible budget. Learned transition costs produce itineraries much closer to real trajectories than popularity or distance alone (+0.07–0.09 F1), but on this small dataset the NN is
-statistically indistinguishable from simple counts. Constraint propagation greatly reduces backtracking but does not reduce run time for such small domains.
+The planner combines neural predictions, category constraints and search to produce valid, time-aware tours. Context Markov raises exact next-place Top-1 from 23.5% for the NN to 27.0% by using the previous and current POIs; its Top-3 is 51.1%. That is the strongest one-step accuracy measured here, but it is not high in absolute terms. For complete itineraries, the NN has the strongest held-out F1 (0.525), slightly ahead of first-order counts (0.512) and context counts (0.509). The app exposes both models and labels the different objectives. More data and user/trip context are needed for substantially higher accuracy. Flickr durations remain noisy, while the CSP and A* search enforce route rules and budget constraints.
 
-*Reproduction:* `python make_data.py && python run_experiments.py --seeds 10` (README). *AI assistance:* the code, experiments and this text were produced with Claude (Anthropic); the team must review and state this according to the course rules.
+*Reproduction:* `python make_data.py --city Edin --seed 0` then `python run_experiments.py --city Edin --seeds 10` (README).
