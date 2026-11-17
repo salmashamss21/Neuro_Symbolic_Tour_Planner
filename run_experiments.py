@@ -27,6 +27,45 @@ def mean_std(df, by, cols):
     return g.reset_index()
 
 
+def paired_delta_summary(delta, seed=42000):
+    """Mean paired difference and a deterministic percentile bootstrap interval."""
+    values = np.asarray(delta, dtype=float)
+    rng = np.random.default_rng(seed)
+    draws = values[rng.integers(0, len(values), size=(20_000, len(values)))].mean(axis=1)
+    return {"delta_mean": float(values.mean()), "delta_sd": float(values.std(ddof=1)),
+            "ci95_low": float(np.quantile(draws, 0.025)),
+            "ci95_high": float(np.quantile(draws, 0.975)), "n_seeds": len(values)}
+
+
+def tune_goal_models(cd, tuning_seeds=(0, 1, 2)):
+    """Select fixed optional-model configs using validation NLL on seeds 0-2 only."""
+    configs = {
+        "goal": [{"hidden": (64, 32), "lr": 0.001}, {"hidden": (32, 32), "lr": 0.002}],
+        "feature": [{"hidden": (32,), "lr": 0.001}, {"hidden": (64,), "lr": 0.002}],
+    }
+    scores = {name: np.zeros(len(values)) for name, values in configs.items()}
+    for seed in tuning_seeds:
+        split = D.split_users(cd.visits, seed)
+        tr = D.goal_transitions(cd.visits, split["train"])
+        va = D.goal_transitions(cd.visits, split["val"])
+        for family, choices in configs.items():
+            for i, choice in enumerate(choices):
+                if family == "goal":
+                    model = nn.GoalAwareNextPlaceNet(cd.n_places, seed=seed, max_epochs=45, **choice)
+                else:
+                    model = nn.FeatureNextPlaceNet(cd.n_places, cd.cat_of, cd.travel_min,
+                                                   seed=seed, max_epochs=45, **choice)
+                model.fit_goal(tr, va)
+                scores[family][i] += nn.goal_metrics(model, va)["nll"]
+    scores = {k: v / len(tuning_seeds) for k, v in scores.items()}
+    selected = {family: choices[int(np.argmin(scores[family]))]
+                for family, choices in configs.items()}
+    return {"goal_hidden": selected["goal"]["hidden"], "goal_lr": selected["goal"]["lr"],
+            "feature_hidden": selected["feature"]["hidden"], "feature_lr": selected["feature"]["lr"],
+            "tuning_seeds": list(tuning_seeds),
+            "validation_nll": {k: v.tolist() for k, v in scores.items()}}
+
+
 # --------------------------------------------------------------- NN vs baselines ---
 def exp_nn(cd, models):
     rows = []
@@ -36,6 +75,9 @@ def exp_nn(cd, models):
             rows.append(dict(seed=seed, task="next place", model=name, **nn.next_metrics(m, te)))
         rows.append(dict(seed=seed, task="next place", model="Context Markov",
                          **nn.context_metrics(r["context_markov"], r["data"]["te_ctx"])))
+        for name, model in (("Goal-aware NN", r["goal_next"]), ("Feature NN", r["feature_next"])):
+            rows.append(dict(seed=seed, task="next place", model=name,
+                             **nn.goal_metrics(model, r["data"]["te_goal"])))
         ted = r["data"]["te_d"]
         for name, m in [("NN", r["nn_dur"]), ("Per-place mean", r["mean_dur"]), ("Global mean", r["glob_dur"])]:
             rows.append(dict(seed=seed, task="duration", model=name, **nn.duration_metrics(m, ted)))
@@ -45,6 +87,15 @@ def exp_nn(cd, models):
     b = mean_std(df[df.task == "duration"], "model", ["mae_log", "rmse_log", "mae_min"])
     a.to_csv(RES / "nn_next_summary.csv", index=False)
     b.to_csv(RES / "nn_duration_summary.csv", index=False)
+    per_seed = df[df.task == "next place"].pivot(index="seed", columns="model", values=["nll", "top1", "top3"])
+    paired = []
+    for model in sorted(df.loc[(df.task == "next place") & (df.model != "Markov (counts)"), "model"].unique()):
+        for metric in ("nll", "top1", "top3"):
+            delta = per_seed[(metric, model)] - per_seed[(metric, "Markov (counts)")]
+            summary = paired_delta_summary(delta, 42000 + len(paired))
+            paired.append({"model": model, "metric": metric,
+                           **{f"delta_vs_markov_{k}": v for k, v in summary.items()}})
+    pd.DataFrame(paired).to_csv(RES / "nn_next_paired_vs_markov.csv", index=False)
     return a, b
 
 
@@ -123,7 +174,7 @@ def exp_f1(cd, models, seeds):
         prior = C.category_prior(cd, r["data"]["tr_t"])
         trajs = D.trajectories(cd.visits, r["split"]["test"], min_len=3)
         reqs = E.requests_from_trajectories(cd, trajs, np.random.default_rng(3000 + seed))
-        for name in ("NN", "Markov", "Context Markov", "Popularity", "Off"):
+        for name in ("NN", "Markov", "Context Markov", "Goal-aware NN", "Feature NN", "Popularity", "Off"):
             b = r["bundles"][name]
             for t, req in reqs:
                 pl = I.plan(cd, b, req, prior)
@@ -144,6 +195,13 @@ def exp_f1(cd, models, seeds):
     summ = mean_std(per_seed, "model", ["f1_mid", "f1_all", "prec", "rec", "over_budget"])
     summ["n_requests_per_seed"] = per_seed.groupby("model")["n_requests"].mean().values
     summ.to_csv(RES / "exp3_f1_summary.csv", index=False)
+    paired = per_seed.pivot(index="seed", columns="model", values="f1_mid")
+    diffs = []
+    for name in paired.columns:
+        if name != "Markov":
+            summary = paired_delta_summary(paired[name] - paired["Markov"], 42100 + len(diffs))
+            diffs.append({"model": name, **{f"f1_mid_delta_vs_markov_{k}": v for k, v in summary.items()}})
+    pd.DataFrame(diffs).to_csv(RES / "exp3_paired_vs_markov.csv", index=False)
     return per_seed, summ
 
 
@@ -177,13 +235,14 @@ def plots(cd, models, e1, e2, e3, nn_per_seed):
     ax[0].legend(frameon=False)
     fig.tight_layout(); fig.savefig(FIG / "exp2_csp.png", dpi=160); plt.close(fig)
     # exp3
-    order = ["NN", "Markov", "Context Markov", "Popularity", "Off"]
+    order = ["NN", "Goal-aware NN", "Feature NN", "Markov", "Context Markov", "Popularity", "Off"]
     lab = {"NN": "NN costs", "Markov": "Markov counts", "Context Markov": "Context counts",
+           "Goal-aware NN": "Goal-aware NN", "Feature NN": "Feature NN",
            "Popularity": "Popularity", "Off": "No model (travel only)"}
     fig, ax = plt.subplots(figsize=(5.2, 3.2))
     m = e3.groupby("model")["f1_mid"].agg(["mean", "std"]).loc[order]
     ax.bar([lab[o] for o in order], m["mean"], yerr=m["std"], capsize=3,
-           color=["#F58518", "#4C78A8", "#72B7B2", "#54A24B", "#B279A2"])
+           color=["#F58518", "#E45756", "#B279A2", "#4C78A8", "#72B7B2", "#54A24B", "#9D755D"])
     ax.set_ylabel("F1 on intermediate stops"); plt.setp(ax.get_xticklabels(), rotation=15)
     fig.tight_layout(); fig.savefig(FIG / "exp3_f1.png", dpi=160); plt.close(fig)
     # training curves (seed 0)
@@ -208,7 +267,9 @@ def main():
     cd = D.get_city(a.city)
     seeds = list(range(a.seeds))
     t0 = time.time()
-    models = {s: nn.train_all(cd, s) for s in seeds}
+    tuning = tune_goal_models(cd)
+    goal_config = {k: tuning[k] for k in ("goal_hidden", "goal_lr", "feature_hidden", "feature_lr")}
+    models = {s: nn.train_all(cd, s, goal_config=goal_config) for s in seeds}
     print(f"trained {len(seeds)} model sets in {time.time() - t0:.1f}s")
     na, nb = exp_nn(cd, models)
     print("\n== NN vs baselines: next place (test, mean/std over seeds)\n", na.to_string(index=False))
@@ -217,7 +278,8 @@ def main():
     e2, s2 = exp_csp(cd, models, seeds); print("\n== Exp 2 CSP\n", s2.to_string(index=False))
     e3, s3 = exp_f1(cd, models, seeds); print("\n== Exp 3 F1\n", s3.to_string(index=False))
     plots(cd, models, e1, e2, e3, None)
-    json.dump({"seeds": seeds, "city": a.city, "seconds": time.time() - t0}, open(RES / "run_info.json", "w"))
+    json.dump({"seeds": seeds, "city": a.city, "goal_model_tuning": tuning,
+               "seconds": time.time() - t0}, open(RES / "run_info.json", "w"))
     print(f"\nall done in {time.time() - t0:.0f}s")
 
 

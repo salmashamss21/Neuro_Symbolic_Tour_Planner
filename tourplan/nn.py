@@ -149,6 +149,130 @@ class NextPlaceNet:
         return out
 
 
+class GoalAwareNextPlaceNet(NextPlaceNet):
+    """Optional goal-conditioned MLP: P(next | current, hour, end, stops left)."""
+    name = "Goal-aware NN"
+
+    def __init__(self, n_places: int, seed=0, hidden=(64, 32), lr=1e-3, wd=1e-2,
+                 batch=64, max_epochs=120, patience=15):
+        self.P, self.hidden, self.seed = n_places, tuple(hidden), seed
+        self.lr, self.wd, self.batch, self.max_epochs, self.patience = lr, wd, batch, max_epochs, patience
+        self.net = MLP([2 * n_places + 5, *self.hidden, n_places], np.random.default_rng(seed + 500))
+        self.history = {"train_nll": [], "val_nll": []}
+        self._goal_table_cache = {}
+
+    def _features(self, cur, hour, end, remaining):
+        cur, end = np.asarray(cur, int), np.asarray(end, int)
+        x = np.zeros((len(cur), 2 * self.P + 5))
+        x[np.arange(len(cur)), cur] = 1
+        x[np.arange(len(cur)), self.P + end] = 1
+        ang = 2 * np.pi * np.asarray(hour, float) / 24
+        x[:, 2*self.P:2*self.P+4] = np.column_stack((np.sin(ang), np.cos(ang), np.sin(2*ang), np.cos(2*ang)))
+        x[:, -1] = np.asarray(remaining, float) / 10.0
+        return x
+
+    def logp_goal(self, cur, hour, end, remaining, position=None):
+        out, _ = self.net.forward(self._features(cur, hour, end, remaining))
+        return _masked_log_softmax(out, np.asarray(cur, int))
+
+    def fit_goal(self, train, val):
+        cur, hour, end, remaining, _position, nxt = train
+        vc, vh, ve, vr, _vposition, vn = val
+        rng = np.random.default_rng(self.seed + 501)
+        best, state, bad = np.inf, self.net.get(), 0
+        for _ in range(self.max_epochs):
+            order = rng.permutation(len(cur))
+            for s in range(0, len(cur), self.batch):
+                ix = order[s:s+self.batch]
+                out, acts = self.net.forward(self._features(cur[ix], hour[ix], end[ix], remaining[ix]))
+                lp = _masked_log_softmax(out, cur[ix]); grad = np.exp(lp)
+                grad[np.arange(len(ix)), nxt[ix]] -= 1; grad[np.arange(len(ix)), cur[ix]] = 0
+                gw, gb = self.net.backward(acts, grad / len(ix)); self.net.step(gw, gb, self.lr, self.wd)
+            tr = self._nll_goal(cur, hour, end, remaining, nxt)
+            va = self._nll_goal(vc, vh, ve, vr, vn)
+            self.history['train_nll'].append(tr); self.history['val_nll'].append(va)
+            if va < best - 1e-4: best, state, bad = va, self.net.get(), 0
+            else:
+                bad += 1
+                if bad >= self.patience: break
+        self.net.set(state); self._goal_table_cache.clear(); return self
+
+    def _nll_goal(self, cur, hour, end, remaining, nxt, position=None):
+        lp = self.logp_goal(cur, hour, end, remaining, position)
+        return float(-lp[np.arange(len(nxt)), nxt].mean())
+
+    def table_goal(self, end, remaining, n_buckets=N_BUCKETS, position=None):
+        position = 0.0 if position is None else float(position)
+        key = (int(end), int(remaining), int(n_buckets), round(position, 8))
+        if key in self._goal_table_cache:
+            return self._goal_table_cache[key]
+        out = np.empty((n_buckets, self.P, self.P))
+        for b, h in enumerate(bucket_centres(n_buckets)):
+            out[b] = self.logp_goal(np.arange(self.P), np.full(self.P, h), np.full(self.P, end),
+                                    np.full(self.P, remaining), np.full(self.P, position))
+        self._goal_table_cache[key] = out
+        return out
+
+
+class FeatureNextPlaceNet(GoalAwareNextPlaceNet):
+    """Shared candidate scorer using categories, both distances and route position."""
+    name = "Feature NN"
+
+    def __init__(self, n_places, categories, travel_min, seed=0, hidden=(32,), lr=1e-3,
+                 wd=1e-2, batch=64, max_epochs=120, patience=15):
+        self.P, self.categories = n_places, np.asarray(categories, int)
+        self.n_categories = int(self.categories.max()) + 1
+        self.travel_min = np.asarray(travel_min, float)
+        self.seed, self.hidden, self.lr, self.wd = seed, tuple(hidden), lr, wd
+        self.batch, self.max_epochs, self.patience = batch, max_epochs, patience
+        self.net = MLP([self.n_categories + 4, *self.hidden, 1], np.random.default_rng(seed + 900))
+        self.history = {"train_nll": [], "val_nll": []}
+        self._goal_table_cache = {}
+
+    def _candidate_features(self, cur, end, position):
+        cur, end = np.asarray(cur, int), np.asarray(end, int)
+        n = len(cur); x = np.zeros((n, self.P, self.n_categories + 4))
+        x[np.arange(n)[:, None], np.arange(self.P)[None, :], self.categories[None, :]] = 1
+        scale = max(float(self.travel_min.max()), 1.0)
+        x[:, :, self.n_categories] = self.travel_min[cur] / scale
+        x[:, :, self.n_categories+1] = self.travel_min[end] / scale
+        x[:, :, self.n_categories+2] = np.asarray(position, float)[:, None]
+        x[:, :, self.n_categories+3] = self.categories[cur, None] / max(1, self.n_categories-1)
+        return x
+
+    def _logp_candidate(self, cur, hour, end, remaining, position=None):
+        if position is None:
+            position = 1.0 - np.asarray(remaining, float) / (np.asarray(remaining, float) + 1)
+        feat = self._candidate_features(cur, end, position)
+        raw, _ = self.net.forward(feat.reshape(-1, feat.shape[-1]))
+        return _masked_log_softmax(raw.reshape(len(cur), self.P), np.asarray(cur, int))
+
+    def logp_goal(self, cur, hour, end, remaining, position=None):
+        return self._logp_candidate(cur, hour, end, remaining, position)
+
+    def fit_goal(self, train, val):
+        cur, hour, end, remaining, position, nxt = train
+        vc, vh, ve, vr, vposition, vn = val
+        rng = np.random.default_rng(self.seed + 901); best, state, bad = np.inf, self.net.get(), 0
+        for _ in range(self.max_epochs):
+            order = rng.permutation(len(cur))
+            for s in range(0, len(cur), self.batch):
+                ix = order[s:s+self.batch]; feat = self._candidate_features(cur[ix], end[ix], position[ix])
+                raw, acts = self.net.forward(feat.reshape(-1, feat.shape[-1])); logits = raw.reshape(len(ix), self.P)
+                lp = _masked_log_softmax(logits, cur[ix]); grad = np.exp(lp)
+                grad[np.arange(len(ix)), nxt[ix]] -= 1; grad[np.arange(len(ix)), cur[ix]] = 0
+                grad = grad.reshape(-1, 1) / len(ix); gw, gb = self.net.backward(acts, grad)
+                self.net.step(gw, gb, self.lr, self.wd)
+            tr = self._nll_goal(cur, hour, end, remaining, nxt, position)
+            va = self._nll_goal(vc, vh, ve, vr, vn, vposition)
+            self.history['train_nll'].append(tr); self.history['val_nll'].append(va)
+            if va < best - 1e-4: best, state, bad = va, self.net.get(), 0
+            else:
+                bad += 1
+                if bad >= self.patience: break
+        self.net.set(state); return self
+
+
 # --------------------------------------------------------------- head 2: duration ---
 class DurationNet:
     name = "NN"
@@ -390,6 +514,15 @@ def context_metrics(model, data) -> dict:
                 top3=float((top[:, :3] == nxt[:, None]).any(1).mean()))
 
 
+def goal_metrics(model, data) -> dict:
+    cur, hour, end, remaining, position, nxt = data
+    lp = model.logp_goal(cur, hour, end, remaining, position)
+    top = np.argsort(-lp, axis=1)
+    return dict(nll=float(-lp[np.arange(len(nxt)), nxt].mean()),
+                top1=float((top[:, 0] == nxt).mean()),
+                top3=float((top[:, :3] == nxt[:, None]).any(1).mean()))
+
+
 def duration_metrics(model, data) -> dict:
     place, hour, y = data
     pred = model.predict_log(place, hour)
@@ -419,7 +552,22 @@ class ModelBundle:
         return self._dur
 
 
-def train_all(cd, seed: int, quick: bool = False):
+@dataclass
+class GoalAwareBundle:
+    """Transition bundle whose probabilities depend on the request end and route position."""
+    name: str
+    trans: object
+    dur: object
+    n_buckets: int = N_BUCKETS
+    _dur: np.ndarray = field(default=None, repr=False)
+
+    def dur_table(self):
+        if self._dur is None:
+            self._dur = self.dur.table_minutes(self.n_buckets)
+        return self._dur
+
+
+def train_all(cd, seed: int, quick: bool = False, goal_config: dict | None = None):
     """Train every model for one seed (user split + initialisation).  Returns dict."""
     from . import data as D
     sp = D.split_users(cd.visits, seed)
@@ -427,25 +575,38 @@ def train_all(cd, seed: int, quick: bool = False):
     tr_ctx, va_ctx, te_ctx = (
         D.context_transitions(cd.visits, sp[k]) for k in ("train", "val", "test")
     )
+    tr_goal, va_goal, te_goal = (D.goal_transitions(cd.visits, sp[k]) for k in ("train", "val", "test"))
     tr_d, va_d, te_d = (D.duration_samples(cd.visits, sp[k]) for k in ("train", "val", "test"))
     P = cd.n_places
     kw = dict(max_epochs=40) if quick else {}
+    goal_config = goal_config or {}
     nn_next = NextPlaceNet(P, seed=seed, **kw).fit(tr_t, va_t)
     nn_dur = DurationNet(P, seed=seed, **kw).fit(tr_d, va_d)
     markov = MarkovCounts(P).fit(tr_t, va_t)
     context_markov = ContextMarkovCounts(P).fit(tr_t, tr_ctx, va_t, va_ctx)
+    epochs = 40 if quick else 120
+    goal_next = GoalAwareNextPlaceNet(P, seed=seed, max_epochs=epochs,
+                                      hidden=goal_config.get("goal_hidden", (64, 32)),
+                                      lr=goal_config.get("goal_lr", 1e-3)).fit_goal(tr_goal, va_goal)
+    feature_next = FeatureNextPlaceNet(P, cd.cat_of, cd.travel_min, seed=seed, max_epochs=epochs,
+                                       hidden=goal_config.get("feature_hidden", (32,)),
+                                       lr=goal_config.get("feature_lr", 1e-3)).fit_goal(tr_goal, va_goal)
     pop = Popularity(P).fit(tr_t)
     mean_dur = MeanDuration(P).fit(tr_d)
     glob_dur = GlobalMeanDuration(P).fit(tr_d)
     return dict(split=sp, data=dict(tr_t=tr_t, va_t=va_t, te_t=te_t,
                                     tr_ctx=tr_ctx, va_ctx=va_ctx, te_ctx=te_ctx,
+                                    tr_goal=tr_goal, va_goal=va_goal, te_goal=te_goal,
                                     tr_d=tr_d, va_d=va_d, te_d=te_d),
                 nn_next=nn_next, nn_dur=nn_dur, markov=markov,
                 context_markov=context_markov, pop=pop, mean_dur=mean_dur,
+                goal_next=goal_next, feature_next=feature_next,
                 glob_dur=glob_dur,
                 bundles={"NN": ModelBundle("NN", nn_next, nn_dur),
                          "Markov": ModelBundle("Markov", markov, mean_dur),
                          "Context Markov": ModelBundle("Context Markov", context_markov, mean_dur),
+                         "Goal-aware NN": GoalAwareBundle("Goal-aware NN", goal_next, mean_dur),
+                         "Feature NN": GoalAwareBundle("Feature NN", feature_next, mean_dur),
                          "Popularity": ModelBundle("Popularity", pop, mean_dur),
                          "NN-trans+MeanDur": ModelBundle("NN-trans+MeanDur", nn_next, mean_dur),
                          "Off": ModelBundle("Off", UniformTrans(P), glob_dur)})

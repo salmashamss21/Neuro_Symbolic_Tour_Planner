@@ -229,6 +229,25 @@ def context_transitions(visits: pd.DataFrame, users: set | None = None):
             nxt[m].to_numpy().astype(int))
 
 
+def goal_transitions(visits: pd.DataFrame, users: set | None = None):
+    """(current, hour, trajectory_end, stops_remaining, next) for each transition."""
+    v = visits if users is None else visits[visits["user"].isin(users)]
+    v = v.sort_values(["traj", "pos_in_traj"])
+    groups = v.groupby("traj", sort=False)
+    nxt = groups["poi_idx"].shift(-1)
+    end = groups["poi_idx"].transform("last")
+    lengths = groups["poi_idx"].transform("size")
+    remaining = lengths - v["pos_in_traj"] - 1
+    position = v["pos_in_traj"] / (lengths - 1).clip(lower=1)
+    mask = nxt.notna()
+    return (v.loc[mask, "poi_idx"].to_numpy(dtype=int),
+            v.loc[mask, "hour_end"].to_numpy(dtype=float),
+            end.loc[mask].to_numpy(dtype=int),
+            remaining.loc[mask].to_numpy(dtype=float),
+            position.loc[mask].to_numpy(dtype=float),
+            nxt.loc[mask].to_numpy(dtype=int))
+
+
 def duration_samples(visits: pd.DataFrame, users: set | None = None):
     """(place, arrival hour, log clipped duration in seconds) for every visit."""
     v = visits if users is None else visits[visits["user"].isin(users)]

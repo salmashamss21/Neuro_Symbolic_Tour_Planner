@@ -69,6 +69,12 @@ haversine distance × 1.3 (street detour factor) ÷ 4.5 km/h × 60. In the plann
 `data/processed/Edin_meta.json`: all constants above.
 `data/processed/Edin_splits_seed0.json`: users in train / val / test (70 / 15 / 15 %, seeded shuffle).
 
+For goal-aware training examples (generated in memory by `goal_transitions`; not added to the CSV),
+`goal_end` is the last POI in that filtered trajectory (derived from `poi_idx`), `stops_remaining`
+is `traj_len - pos_in_traj - 1`, and `trajectory_position` is `pos_in_traj / max(traj_len - 1, 1)`.
+These fields are derived from each real trajectory; they are not synthetic labels. Examples retain the
+current place, hour, and next place from the real transition.
+
 ## Generated inputs of the experiments (all **G**)
 
 | item | how it is generated |

@@ -1,1 +1,1 @@
-{"seeds": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "city": "Edin", "seconds": 528.709114074707}
+{"seeds": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9], "city": "Edin", "goal_model_tuning": {"goal_hidden": [32, 32], "goal_lr": 0.002, "feature_hidden": [64], "feature_lr": 0.002, "tuning_seeds": [0, 1, 2], "validation_nll": {"goal": [1.9576551785477125, 1.953193018301908], "feature": [2.1252767082953166, 2.0711893464612583]}}, "seconds": 943.7724087238312}

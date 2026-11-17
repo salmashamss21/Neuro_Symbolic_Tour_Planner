@@ -62,7 +62,8 @@ class SearchProblem:
         P = self.cd.n_places
         self.n = len(self.pattern)
         self.cats = self.cd.cat_of
-        self.logp = self.bundle.logp_table()               # (B, P, P) or context-aware (B, P+1, P, P)
+        self.goal_aware = hasattr(getattr(self.bundle, "trans", None), "table_goal")
+        self.logp = (np.empty((self.bundle.n_buckets, P, P)) if self.goal_aware else self.bundle.logp_table())
         self.P = P
         self.contextual = self.logp.ndim == 4
         self.nb = self.logp.shape[0]
@@ -74,6 +75,10 @@ class SearchProblem:
         self.cands[-1] = np.array([self.end])
         for k in range(1, self.n - 1):    # start / end places are not re-used as intermediate stops
             self.cands[k] = np.array([j for j in self.cands[k] if j not in (self.start, self.end)], dtype=int)
+        if self.goal_aware:
+            self.goal_logp = np.stack([self.bundle.trans.table_goal(
+                                           self.end, self.n-k-1, self.nb, k / max(self.n-1, 1))
+                                       for k in range(self.n - 1)])
         self._build_heuristic()
 
     # ------------------------------------------------------------- model pieces ----
@@ -83,11 +88,13 @@ class SearchProblem:
     def stay_at(self, place: int, elapsed: int) -> int:
         return int(self.stay[self.bucket(elapsed), place])
 
-    def step_cost(self, i: int, j: int, depart_elapsed: int, prev: int | None = None):
+    def step_cost(self, i: int, j: int, depart_elapsed: int, prev: int | None = None, pos: int = 0):
         """cost of moving i->j, leaving i at elapsed minutes. Returns (cost, nll, travel)."""
         tr = int(self.trav[i, j])
         b = self.bucket(depart_elapsed)
-        if self.contextual:
+        if self.goal_aware:
+            nll = float(-self.goal_logp[pos, b, i, j])
+        elif self.contextual:
             previous = self.P if prev is None or prev < 0 else prev
             nll = float(-self.logp[b, previous, i, j])
         else:
@@ -101,13 +108,14 @@ class SearchProblem:
         """h[k][i] = lower bound of cost to finish from place i at position k  (k = n-1 -> 0)."""
         P = self.cd.n_places
         n = self.n
-        nll_min = ((-self.logp).min(axis=(0, 1)) if self.contextual
-                   else (-self.logp).min(0))                # relaxed over hour / prior place
+        nll_by_pos = ((-self.goal_logp).min(axis=1) if self.goal_aware else None)
+        nll_min = None if self.goal_aware else ((-self.logp).min(axis=(0, 1)) if self.contextual
+                                                else (-self.logp).min(0))
         if self.mode == "time":
             step = self.trav.astype(float)
             stay_min = self.stay.min(0).astype(float)      # (P,)
         else:
-            step = nll_min + self.lam * self.trav
+            step = None if self.goal_aware else nll_min + self.lam * self.trav
             stay_min = np.zeros(P)
         self.step_min = step
         h = [np.full(P, np.inf) for _ in range(n)]
@@ -116,13 +124,15 @@ class SearchProblem:
         tl[n - 1][self.end] = 0.0
         tmin = self.trav.astype(float) + self.stay.min(0)[None, :]
         for k in range(n - 2, -1, -1):
+            step_k = (self.trav.astype(float) if self.mode == "time" else
+                      (nll_by_pos[k] + self.lam * self.trav if self.goal_aware else step))
             nxt = self.cands[k + 1]
             for i in self.cands[k]:
                 best, bt = np.inf, np.inf
                 for j in nxt:
                     if j == i:
                         continue
-                    c = step[i, j] + stay_min[j] + h[k + 1][j]
+                    c = step_k[i, j] + stay_min[j] + h[k + 1][j]
                     best = min(best, c)
                     bt = min(bt, tmin[i, j] + tl[k + 1][j])
                 h[k][i] = best
@@ -149,7 +159,7 @@ def _expand(pb: SearchProblem, pos, prev, cur, visited, elapsed, g, nll_acc, tra
             continue                      # never "move" to the same place
         if not last and (j in visited or j == pb.end):
             continue                      # intermediate stops: unvisited and not the end place
-        c, nll, tr = pb.step_cost(cur, j, elapsed, prev)
+        c, nll, tr = pb.step_cost(cur, j, elapsed, prev, pos)
         arrive = elapsed + tr
         el2 = arrive + pb.stay_at(j, arrive)
         g2 = g + c + (pb.stay_at(j, arrive) if pb.mode == "time" else 0.0)
@@ -243,8 +253,8 @@ def path_cost(pb: SearchProblem, places) -> tuple:
     el = pb.stay_at(places[0], 0)
     g = float(el) if pb.mode == "time" else 0.0
     previous = pb.P
-    for a, b in zip(places[:-1], places[1:]):
-        c, _, tr = pb.step_cost(a, b, el, previous)
+    for pos, (a, b) in enumerate(zip(places[:-1], places[1:])):
+        c, _, tr = pb.step_cost(a, b, el, previous, pos)
         arr = el + tr
         s = pb.stay_at(b, arr)
         el = arr + s
