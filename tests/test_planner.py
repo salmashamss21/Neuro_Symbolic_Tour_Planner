@@ -1,6 +1,7 @@
 """End-to-end planner tests: 5 normal, 3 edge, 2 impossible cases."""
 import numpy as np
 import pytest
+from types import SimpleNamespace
 
 from tourplan import integration as I
 
@@ -79,3 +80,34 @@ def test_impossible_too_many_stops(city, bundle, prior, parks):
 def test_two_stops_same_category_impossible(city, bundle, prior, parks):
     pl = I.plan(city, bundle, req(parks, n_stops=2, must_cat="Park"), prior)
     assert pl.status == "no_solution" and "neighbouring stops must differ" in pl.message
+
+
+def test_widened_search_chooses_lowest_cost_and_reuses_solved_patterns(city, bundle, prior, parks, monkeypatch):
+    from tourplan import integration as I, search as S, csp as C
+    patterns = [(0, 1, 2), (0, 2, 1), (0, 1, 3)]
+    calls = {"solve": 0, "search": 0}
+    stats = SimpleNamespace(expanded=2, generated=4, pruned_budget=3, max_open=6,
+                            as_dict=lambda: {"assignments": 1})
+    monkeypatch.setattr(C, "build_csp", lambda *a, **k: SimpleNamespace(stay_lb=np.ones(4), trav_lb=np.ones((4, 4))))
+    def solve(*args, **kwargs):
+        calls["solve"] += 1
+        return patterns, stats
+    monkeypatch.setattr(C, "solve", solve)
+    monkeypatch.setattr(C, "rank_patterns", lambda values, prior, n: list(values)[:n])
+    monkeypatch.setattr(S, "SearchProblem", lambda *a, **k: SimpleNamespace(mode=k.get("mode", "nll"), pattern=a[4]))
+    def search(problem, algo):
+        calls["search"] += 1
+        if problem.mode == "time":
+            return SimpleNamespace(total_min=50, cost=0), stats
+        if problem.pattern == patterns[0]:
+            return None, stats
+        cost = 8 if problem.pattern == patterns[1] else 3
+        return SimpleNamespace(total_min=60, cost=cost), stats
+    monkeypatch.setattr(S, "search", search)
+    req_ = I.Request(parks[0], parks[1], 120, None, 3)
+    result = I.plan(city, bundle, req_, prior, max_patterns=1)
+    assert result.status == "ok" and result.itinerary.cost == 3
+    assert result.pattern == patterns[2]
+    assert calls["solve"] == 2
+    assert result.search_stats["pruned_budget"] == 9
+    assert result.search_stats["max_open"] == 6

@@ -67,8 +67,8 @@ def plan(cd, bundle, req: Request, prior=None, algo: str = "astar", fc: bool = T
 
     # 2) CSP with the budget rule: up to `max_patterns` best patterns
     p = C.build_csp(cd, bundle, req.start, req.end, req.n_stops, req.must_cat, req.budget_min, prior=prior)
-    pats, st = C.solve(p, fc=fc, ac3=ac3, max_solutions=enum_cap, order_values=True)
-    pats = C.rank_patterns(pats, prior, max_patterns)
+    budget_pats, st = C.solve(p, fc=fc, ac3=ac3, max_solutions=enum_cap, order_values=True)
+    pats = C.rank_patterns(budget_pats, prior, max_patterns)
 
     tried, best, best_pat = [], None, None
     sstats = S.SearchStats()
@@ -92,20 +92,21 @@ def plan(cd, bundle, req: Request, prior=None, algo: str = "astar", fc: bool = T
     min_budget, cheapest, cheapest_pat = _min_time_plan(cd, bundle, req, all_pat, p_free, lam)
     if min_budget is not None and min_budget <= req.budget_min + 1e-9:
         # a feasible plan exists, just not among the top patterns: widen the pattern list
-        rest_all, _ = C.solve(p, fc=fc, ac3=ac3, max_solutions=enum_cap, order_values=True)
-        rest = [q for q in C.rank_patterns(rest_all, prior, len(rest_all)) if q not in set(pats)][:300]
+        rest = [q for q in C.rank_patterns(budget_pats, prior, len(budget_pats))
+                if q not in set(pats)][:300]
         for pat in rest:
             pb = S.SearchProblem(cd, bundle, req.start, req.end, pat, req.start_hour, req.budget_min, lam)
             it, ss = S.search(pb, algo)
             sstats.expanded += ss.expanded
             sstats.generated += ss.generated
+            sstats.pruned_budget += ss.pruned_budget
+            sstats.max_open = max(sstats.max_open, ss.max_open)
             if it is None:
                 tried.append((pat, None, "rejected: predicted durations exceed the budget"))
                 continue
             tried.append((pat, it.cost, "ok"))
             if best is None or it.cost < best.cost:
                 best, best_pat = it, pat
-            break
         if best is None:                                  # fall back to the shortest pattern
             pb = S.SearchProblem(cd, bundle, req.start, req.end, cheapest_pat, req.start_hour,
                                  req.budget_min, lam)
