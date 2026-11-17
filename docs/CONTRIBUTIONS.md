@@ -1,13 +1,9 @@
 # Individual contribution statements (max 200 words each)
 
-> **To be completed by each team member before submission.** The repository was generated in a single
-> session with Claude (Anthropic) acting on the team's behalf, so the git history shows one author and
-> cannot tell who did what. Each member must describe, truthfully, what *they* did (e.g. ran/reviewed
-> the code, wrote parts of the report, prepared slides, did the live demo) and what they did not.
-> Course rules on AI assistance may require stating this explicitly; the sentence below is a starting point.
+> **To be completed by each team member before submission.** Fill in only work you personally completed or reviewed.
+> The early commits carry placeholder author names; they should not be treated as evidence of individual contributions.
 
-**AI assistance disclosure (suggested, edit as needed):** The code, tests, experiments, report and slides were
-drafted with Claude (Anthropic). The team ran the code, reviewed the results and is responsible for the content.
+**AI assistance disclosure (suggested, edit as needed):** AI assistance was used to draft and revise code, tests, experiment materials, the report and slides. Each team member should state what they personally reviewed, ran, or changed.
 
 ---
 

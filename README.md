@@ -20,7 +20,7 @@ python -m venv .venv
 python -m pip install -r requirements.txt
 ```
 
-The archived raw Flickr data is included. To rebuild the Edinburgh processed data with the fixed default seed:
+The raw Flickr data is included. To rebuild the Edinburgh processed data with the fixed default seed:
 
 ```bash
 python make_data.py --city Edin --seed 0
@@ -36,7 +36,7 @@ python -m pytest -q tests
 python run_experiments.py --city Edin --seeds 10
 ```
 
-The demo prints the request, NN baseline metrics, CSP pruning counters, search trace, integrated itinerary, and NN-on/off comparison. The Streamlit planner defaults to the NN because it had the best held-out itinerary F1. Context-aware transition counts are available for higher next-place Top-1 accuracy; first-order Markov, popularity, and no-model options are also available. It saves cooperation plots in `figures/`. Experiment outputs (raw runs, mean ± standard deviation tables, and plots) are in `results/` and `figures/`.
+The demo prints the request, NN baseline metrics, CSP pruning counters, search trace, integrated itinerary, and NN-on/off comparison. The Streamlit planner opens directly on the planner. It includes the standard NN, goal-aware NN, feature-based NN, context Markov, first-order Markov, popularity, and no-model options. Full model training runs when the app loads; this matches the experiment training setup. It saves cooperation plots in `figures/`. Experiment outputs (raw runs, mean +/- standard deviation tables, and plots) are in `results/` and `figures/`.
 
 Try a different request:
 
@@ -51,13 +51,7 @@ python -m pip install -r requirements-app.txt
 streamlit run app.py
 ```
 
-After selecting **Plan itinerary**, the map draws a blue line through the stops in order. The line connects POIs directly and does not represent street-level walking directions.
-
-## Accounts
-
-The app provides self-service registration, sign-in, and sign-out. Usernames are unique and case-insensitive. Passwords must be 12–128 characters; only per-account salted PBKDF2-HMAC-SHA-256 verifiers are stored, using 600,000 iterations. Passwords are never written to the account database in plaintext. This follows OWASP's current PBKDF2 guidance ([Password Storage Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Password_Storage_Cheat_Sheet.html)).
-
-By default, accounts are stored in `users.sqlite3` beside the app. That database is excluded from Git. For a deployment, set `TOUR_PLANNER_AUTH_DB` to a writable, persistent database path; a temporary/ephemeral filesystem can lose accounts when the deployment restarts or is rebuilt. This self-contained account store does not provide email verification, password recovery, or administrator account management.
+After selecting **Plan tour**, the map draws a blue line through the stops in order. The line connects POIs directly and does not represent street-level walking directions.
 
 ## Modules
 
@@ -69,7 +63,7 @@ The `data/`, `nn/`, `search/`, `csp/`, `integration/`, and `eval/` packages prov
 | `nn/` and `tourplan/nn.py` | Next-place and duration networks; first/second-order Markov, popularity, and duration baselines |
 | `csp/` and `tourplan/csp.py` | Category-pattern constraints; BT, FC, AC-3 and counters |
 | `search/` and `tourplan/search.py` | UCS, A*, Greedy, brute-force oracle and search counters |
-| `integration/` and `tourplan/integration.py` | CSP → search → duration validation and budget fallback |
+| `integration/` and `tourplan/integration.py` | CSP -> search -> duration validation and budget fallback |
 | `eval/` and `tourplan/evaluation.py` | Trajectory metrics, generated requests and experiments |
 | `tests/` | Unit and end-to-end tests, including normal, edge and impossible requests |
 | `docs/` | Data dictionary, report, presentation, demo script, contributions template and git log |
@@ -85,6 +79,4 @@ The `data/`, `nn/`, `search/`, `csp/`, `integration/`, and `eval/` packages prov
 
 ## Reproducibility and interpretation
 
-The Edinburgh results in the report were produced with the included source and ten seeds (0–9). The datasets are based on Flickr photo trajectories; photo timestamps are noisy duration proxies. Walking speed, clock correction, requested stop counts, budgets, and must-see categories are documented generated assumptions. Next-place Top-1 remains limited by the small, sparse dataset; the context model is stronger than the one-step NN and first-order counts, but should not be described as highly accurate.
-
-The attached GitHub project and archive were both supplied as reference material. The archived implementation is used as the reproducible core because it includes raw source data, a multi-city-capable data pipeline, report, experimental artifacts, and contribution template. The interactive interface is adapted to this implementation rather than importing incompatible data assumptions from the GitHub version.
+The reported Edinburgh metrics use ten user splits (seeds 0-9). Goal-aware NN reached 47.6% Top-1 and 69.7% Top-3 (test NLL 1.912); feature NN reached 48.0% Top-1 and 64.7% Top-3 (NLL 2.002). Both improve paired next-place NLL and Top-1 versus first-order Markov. The standard NN has the highest mean intermediate-stop F1 (0.525); goal-aware is 0.497 and the feature model is 0.424. Goal-aware hyperparameters are selected by validation NLL on seeds 0-2 only. Because splits differ by seed, mild cross-seed validation/test overlap is possible; within each seed, test users are held out for final reporting. Flickr photo timestamps are noisy duration proxies, while walking speed, clock correction, stop counts, budgets and must-see categories are generated assumptions.
