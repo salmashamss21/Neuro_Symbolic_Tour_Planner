@@ -130,18 +130,27 @@ def _render_auth_gate() -> None:
     if st.session_state.get("auth_username"):
         return
 
-    left, auth_column, right = st.columns([1, 1.2, 1])
-    with auth_column:
-        st.markdown('<div class="planner-kicker">P6 · Neuro-symbolic planning</div>', unsafe_allow_html=True)
-        st.markdown('<div class="planner-title">Welcome to Edinburgh</div>', unsafe_allow_html=True)
-        st.markdown('<div class="planner-subtitle">Sign in or create an account to plan a tour.</div>', unsafe_allow_html=True)
-        sign_in_tab, register_tab = st.tabs(["Sign in", "Create account"])
+    st.markdown('<div class="planner-kicker">P6 · Neuro-symbolic planning</div>', unsafe_allow_html=True)
+    st.markdown('<div class="planner-title">Welcome to Edinburgh</div>', unsafe_allow_html=True)
+    st.markdown(
+        '<div class="planner-subtitle">Sign in or create an account to plan a tour.</div>',
+        unsafe_allow_html=True,
+    )
+    st.write("")
+    sign_in_column, register_column = st.columns(2, gap="large")
 
-        with sign_in_tab:
+    with sign_in_column:
+        with st.container(border=True):
+            st.subheader("Sign in")
+            st.caption("Already have an account? Continue planning your tour.")
             with st.form("sign_in_form"):
                 username = st.text_input("Username", autocomplete="username")
-                password = st.text_input("Password", type="password", autocomplete="current-password")
-                submitted = st.form_submit_button("Sign in", type="primary", use_container_width=True)
+                password = st.text_input(
+                    "Password", type="password", autocomplete="current-password"
+                )
+                submitted = st.form_submit_button(
+                    "Sign in", type="primary", use_container_width=True
+                )
             if submitted:
                 account = _verify_account(username, password)
                 if account:
@@ -149,13 +158,25 @@ def _render_auth_gate() -> None:
                     st.rerun()
                 st.error("Username or password is incorrect.")
 
-        with register_tab:
+    with register_column:
+        with st.container(border=True):
+            st.subheader("Create your account")
+            st.caption("New here? Register to start building a sightseeing itinerary.")
             with st.form("create_account_form"):
                 new_username = st.text_input("Choose a username", autocomplete="username")
-                new_password = st.text_input("Create a password", type="password", autocomplete="new-password")
-                confirm_password = st.text_input("Confirm password", type="password", autocomplete="new-password")
-                st.caption("Usernames: 3–32 letters, numbers, periods, underscores, or hyphens. Passwords: 12–128 characters.")
-                submitted = st.form_submit_button("Create account", type="primary", use_container_width=True)
+                new_password = st.text_input(
+                    "Create a password", type="password", autocomplete="new-password"
+                )
+                confirm_password = st.text_input(
+                    "Confirm password", type="password", autocomplete="new-password"
+                )
+                st.caption(
+                    "Username: 3–32 letters, numbers, periods, underscores, or hyphens. "
+                    "Password: 12–128 characters."
+                )
+                submitted = st.form_submit_button(
+                    "Create account", type="primary", use_container_width=True
+                )
             if submitted:
                 if new_password != confirm_password:
                     st.error("The passwords do not match.")
@@ -166,8 +187,10 @@ def _render_auth_gate() -> None:
                         st.rerun()
                     st.error(result)
 
-        st.caption("Passwords are stored as salted PBKDF2 hashes, never plaintext.")
-        st.caption("Accounts use a local SQLite file. See the README before deploying on an ephemeral host.")
+    st.caption(
+        "Passwords are stored as salted hashes. Accounts use local SQLite storage; "
+        "see the README for deployment notes."
+    )
     st.stop()
 
 
