@@ -110,7 +110,11 @@ def plan(cd, bundle, req: Request, prior=None, algo: str = "astar", fc: bool = T
         if best is None:                                  # fall back to the shortest pattern
             pb = S.SearchProblem(cd, bundle, req.start, req.end, cheapest_pat, req.start_hour,
                                  req.budget_min, lam)
-            best, _ = S.search(pb, algo)
+            best, ss = S.search(pb, algo)
+            sstats.expanded += ss.expanded
+            sstats.generated += ss.generated
+            sstats.pruned_budget += ss.pruned_budget
+            sstats.max_open = max(sstats.max_open, ss.max_open)
             best_pat = cheapest_pat
         return Plan("ok", f"Itinerary found after widening to {len(tried)} pattern(s) "
                           f"(the 10 most typical patterns did not fit the budget).", best, best_pat,
