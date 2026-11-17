@@ -2,14 +2,7 @@
 from __future__ import annotations
 
 import json
-import hashlib
-import hmac
-import os
 from pathlib import Path
-import re
-import secrets
-import sqlite3
-from datetime import datetime, timezone
 
 import pandas as pd
 import pydeck as pdk
@@ -19,15 +12,11 @@ from tourplan import csp, data, integration, nn
 
 
 ROOT = Path(__file__).resolve().parent
-AUTH_DB_PATH = Path(os.environ.get("TOUR_PLANNER_AUTH_DB", ROOT / "users.sqlite3")).expanduser()
-PASSWORD_ITERATIONS = 600_000
 CATEGORY_COLORS = {
     "Park": [34, 197, 94, 210],
     "Historical": [234, 88, 12, 210],
     "Cultural": [168, 85, 247, 210],
     "Museum": [59, 130, 246, 210],
-    "Cafe": [245, 158, 11, 210],
-    "Castle": [239, 68, 68, 210],
     "Structure": [14, 116, 144, 210],
     "Entertainment": [219, 39, 119, 210],
 }
@@ -36,7 +25,7 @@ CATEGORY_COLORS = {
 @st.cache_resource(show_spinner="Loading Edinburgh data and training the models…")
 def load_system(seed: int):
     city = data.get_city("Edin")
-    models = nn.train_all(city, seed, quick=True)
+    models = nn.train_all(city, seed)
     prior = csp.category_prior(city, models["data"]["tr_t"])
     return city, models, prior
 
@@ -44,154 +33,6 @@ def load_system(seed: int):
 def format_clock(minutes: float) -> str:
     value = int(round(minutes)) % (24 * 60)
     return f"{value // 60:02d}:{value % 60:02d}"
-
-
-def _password_hash(password: str, salt: bytes) -> bytes:
-    return hashlib.pbkdf2_hmac(
-        "sha256", password.encode("utf-8"), salt, PASSWORD_ITERATIONS, dklen=32
-    )
-
-
-def _open_auth_db():
-    AUTH_DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    return sqlite3.connect(AUTH_DB_PATH, timeout=15)
-
-
-def _initialize_auth_db() -> None:
-    with _open_auth_db() as db:
-        db.execute("PRAGMA journal_mode=WAL")
-        db.execute(
-            """CREATE TABLE IF NOT EXISTS users (
-                username TEXT PRIMARY KEY COLLATE NOCASE,
-                salt BLOB NOT NULL,
-                password_hash BLOB NOT NULL,
-                created_at TEXT NOT NULL
-            )"""
-        )
-
-
-def _validate_username(username: str) -> tuple[str | None, str | None]:
-    username = username.strip()
-    if not 3 <= len(username) <= 32:
-        return None, "Use a username between 3 and 32 characters."
-    if re.fullmatch(r"[A-Za-z0-9_.-]+", username) is None:
-        return None, "Usernames may contain letters, numbers, periods, underscores, and hyphens."
-    return username, None
-
-
-def _create_account(username: str, password: str) -> tuple[bool, str]:
-    normalized, error = _validate_username(username)
-    if error:
-        return False, error
-    if not 12 <= len(password) <= 128:
-        return False, "Use a password between 12 and 128 characters."
-
-    salt = secrets.token_bytes(16)
-    verifier = _password_hash(password, salt)
-    try:
-        with _open_auth_db() as db:
-            db.execute(
-                "INSERT INTO users (username, salt, password_hash, created_at) VALUES (?, ?, ?, ?)",
-                (normalized, salt, verifier, datetime.now(timezone.utc).isoformat()),
-            )
-    except sqlite3.IntegrityError:
-        return False, "That username is already registered. Choose another one."
-    except sqlite3.Error:
-        return False, "Account storage is unavailable. Please try again later."
-    return True, normalized
-
-
-def _verify_account(username: str, password: str) -> str | None:
-    normalized, _ = _validate_username(username)
-    try:
-        with _open_auth_db() as db:
-            row = None if normalized is None else db.execute(
-                "SELECT username, salt, password_hash FROM users WHERE username = ?",
-                (normalized,),
-            ).fetchone()
-    except sqlite3.Error:
-        return None
-
-    # Do a same-cost derivation for unknown usernames to make account discovery harder.
-    salt = row[1] if row else bytes(16)
-    expected = row[2] if row else bytes(32)
-    candidate = _password_hash(password[:128], salt)
-    matches = hmac.compare_digest(candidate, expected)
-    return row[0] if row and len(password) <= 128 and matches else None
-
-
-def _render_auth_gate() -> None:
-    try:
-        _initialize_auth_db()
-    except (OSError, sqlite3.Error):
-        st.error("Account storage could not be opened. Check the deployment's writable database path.")
-        st.stop()
-
-    if st.session_state.get("auth_username"):
-        return
-
-    st.markdown('<div class="planner-kicker">P6 · Neuro-symbolic planning</div>', unsafe_allow_html=True)
-    st.markdown('<div class="planner-title">Welcome to Edinburgh</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="planner-subtitle">Sign in or create an account to plan a tour.</div>',
-        unsafe_allow_html=True,
-    )
-    st.write("")
-    sign_in_column, register_column = st.columns(2, gap="large")
-
-    with sign_in_column:
-        with st.container(border=True):
-            st.subheader("Sign in")
-            st.caption("Already have an account? Continue planning your tour.")
-            with st.form("sign_in_form"):
-                username = st.text_input("Username", autocomplete="username")
-                password = st.text_input(
-                    "Password", type="password", autocomplete="current-password"
-                )
-                submitted = st.form_submit_button(
-                    "Sign in", type="primary", use_container_width=True
-                )
-            if submitted:
-                account = _verify_account(username, password)
-                if account:
-                    st.session_state["auth_username"] = account
-                    st.rerun()
-                st.error("Username or password is incorrect.")
-
-    with register_column:
-        with st.container(border=True):
-            st.subheader("Create your account")
-            st.caption("New here? Register to start building a sightseeing itinerary.")
-            with st.form("create_account_form"):
-                new_username = st.text_input("Choose a username", autocomplete="username")
-                new_password = st.text_input(
-                    "Create a password", type="password", autocomplete="new-password"
-                )
-                confirm_password = st.text_input(
-                    "Confirm password", type="password", autocomplete="new-password"
-                )
-                st.caption(
-                    "Username: 3–32 letters, numbers, periods, underscores, or hyphens. "
-                    "Password: 12–128 characters."
-                )
-                submitted = st.form_submit_button(
-                    "Create account", type="primary", use_container_width=True
-                )
-            if submitted:
-                if new_password != confirm_password:
-                    st.error("The passwords do not match.")
-                else:
-                    created, result = _create_account(new_username, new_password)
-                    if created:
-                        st.session_state["auth_username"] = result
-                        st.rerun()
-                    st.error(result)
-
-    st.caption(
-        "Passwords are stored as salted hashes. Accounts use local SQLite storage; "
-        "see the README for deployment notes."
-    )
-    st.stop()
 
 
 def route_rows(city, itinerary):
@@ -220,7 +61,7 @@ def route_rows(city, itinerary):
             "Category": category,
             "Arrival": format_clock(itinerary.arrive[i]),
             "Stay (min)": stay,
-            "Walk to next (min)": None if walk is None else round(walk, 1),
+            "Walk to next (min)": None if walk is None else round(walk),
         })
     return rows, map_points, coordinates
 
@@ -250,8 +91,6 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-_render_auth_gate()
-
 st.markdown('<div class="planner-kicker">P6 · Neuro-symbolic planning</div>', unsafe_allow_html=True)
 st.markdown('<div class="planner-title">Edinburgh Tour Planner</div>', unsafe_allow_html=True)
 st.markdown(
@@ -261,13 +100,6 @@ st.markdown(
 )
 
 with st.sidebar:
-    st.caption(f"Signed in as **{st.session_state['auth_username']}**")
-    if st.button("Sign out", use_container_width=True):
-        st.session_state.pop("auth_username", None)
-        st.session_state.pop("planner_result", None)
-        st.session_state.pop("csp_comparison", None)
-        st.session_state.pop("model_comparison", None)
-        st.rerun()
     st.divider()
     st.header("🧭 Tour request")
     seed = st.number_input("Model seed", min_value=0, max_value=9999, value=0, step=1)
@@ -304,14 +136,17 @@ with st.sidebar:
             "Route cost model",
             ["Neural network (best held-out route F1)",
              "Context-aware counts (higher next-place Top-1)",
+             "Goal-aware neural network", "Feature-based neural network",
              "Markov counts", "Popularity", "No model"],
         )
-    solve = st.button("🚀 Plan tour", type="primary", use_container_width=True)
+    solve = st.button("🚀 Plan tour", type="primary", width="stretch")
 
 if solve:
     bundle_key = {
         "Neural network (best held-out route F1)": "NN",
         "Context-aware counts (higher next-place Top-1)": "Context Markov",
+        "Goal-aware neural network": "Goal-aware NN",
+        "Feature-based neural network": "Feature NN",
         "Markov counts": "Markov",
         "Popularity": "Popularity",
         "No model": "Off",
@@ -380,7 +215,7 @@ with tabs[0]:
 
             rows, map_points, coordinates = route_rows(city, itinerary)
             st.subheader("Tour schedule")
-            st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
 
             left, right = st.columns([1.7, 1], gap="large")
             with left:
@@ -426,7 +261,7 @@ with tabs[0]:
                         map_style=None,
                         tooltip={"html": "<b>{label}</b><br/>Category: {category}"},
                     ),
-                    use_container_width=True,
+                    width="stretch",
                 )
                 st.caption("The line connects planned stops in order; it is not turn-by-turn road routing.")
             with right:
@@ -448,7 +283,7 @@ with tabs[0]:
                     data=json.dumps(payload, indent=2),
                     file_name="edinburgh_itinerary.json",
                     mime="application/json",
-                    use_container_width=True,
+                    width="stretch",
                 )
                 with st.expander("Planner diagnostics"):
                     st.write({
@@ -485,7 +320,7 @@ with tabs[1]:
     csp_comparison = st.session_state.get("csp_comparison")
     if csp_comparison:
         csp_rows, patterns = csp_comparison
-        st.dataframe(pd.DataFrame(csp_rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(csp_rows), width="stretch", hide_index=True)
         if patterns:
             st.markdown("#### Highest-ranked valid patterns")
             st.write([" → ".join(integration.pattern_names(city, pattern)) for pattern in patterns])
@@ -502,7 +337,9 @@ with tabs[2]:
             int(start), int(end), budget_hours * 60, must_category, int(num_stops), float(start_hour)
         )
         compare_rows = []
-        for label, key in [("Context-aware counts", "Context Markov"),
+        for label, key in [("Goal-aware neural network", "Goal-aware NN"),
+                           ("Feature-based neural network", "Feature NN"),
+                           ("Context-aware counts", "Context Markov"),
                            ("Neural network", "NN"), ("Markov counts", "Markov"),
                            ("Popularity", "Popularity"), ("No model", "Off")]:
             plan = integration.plan(city, models["bundles"][key], req, prior)
@@ -518,7 +355,7 @@ with tabs[2]:
     model_comparison = st.session_state.get("model_comparison")
     if model_comparison:
         comparison = pd.DataFrame(model_comparison)
-        st.dataframe(comparison, use_container_width=True, hide_index=True)
+        st.dataframe(comparison, width="stretch", hide_index=True)
         chart_data = comparison.dropna(subset=["Route cost"]).set_index("Model")[["Route cost"]]
         if not chart_data.empty:
             st.bar_chart(chart_data, horizontal=True)
@@ -538,17 +375,17 @@ with tabs[3]:
         st.caption("Mean expanded search nodes by itinerary length; error bars are shown in the full table as standard deviation.")
         chart = summary.pivot(index="n", columns="algo", values="expanded_mean")
         st.line_chart(chart)
-        st.dataframe(summary, use_container_width=True, hide_index=True)
+        st.dataframe(summary, width="stretch", hide_index=True)
     elif exp_choice == "CSP pruning":
         summary = pd.read_csv(ROOT / "results" / "exp2_csp_summary.csv")
         chart = summary.pivot(index="n", columns="variant", values="backtracks_mean")
         st.line_chart(chart)
-        st.dataframe(summary, use_container_width=True, hide_index=True)
+        st.dataframe(summary, width="stretch", hide_index=True)
     else:
         summary = pd.read_csv(ROOT / "results" / "exp3_f1_summary.csv")
         chart = summary.set_index("model")[["f1_mid_mean", "f1_all_mean"]]
         st.bar_chart(chart)
-        st.dataframe(summary, use_container_width=True, hide_index=True)
+        st.dataframe(summary, width="stretch", hide_index=True)
 
 with tabs[4]:
     st.subheader("Model and dataset metrics")
@@ -563,7 +400,11 @@ with tabs[4]:
                        "Test NLL": context_score["nll"],
                        "Top-1 accuracy": context_score["top1"],
                        "Top-3 accuracy": context_score["top3"]})
-    st.dataframe(pd.DataFrame(metrics), use_container_width=True, hide_index=True)
+    for label, key in [("Goal-aware NN", "goal_next"), ("Feature NN", "feature_next")]:
+        score = nn.goal_metrics(models[key], models["data"]["te_goal"])
+        metrics.append({"Model": label, "Test NLL": score["nll"],
+                        "Top-1 accuracy": score["top1"], "Top-3 accuracy": score["top3"]})
+    st.dataframe(pd.DataFrame(metrics), width="stretch", hide_index=True)
     duration = nn.duration_metrics(models["nn_dur"], models["data"]["te_d"])
     st.metric("Duration model MAE", f"{duration['mae_min']:.1f} min")
     st.markdown("#### Dataset")
