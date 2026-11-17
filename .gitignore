@@ -1,6 +1,3 @@
 __pycache__/
 .pytest_cache/
 *.pyc
-users.sqlite3
-users.sqlite3-shm
-users.sqlite3-wal

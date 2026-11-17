@@ -22,7 +22,7 @@ CATEGORY_COLORS = {
 }
 
 
-@st.cache_resource(show_spinner="Loading Edinburgh data and training the models…")
+@st.cache_resource(show_spinner="Loading Edinburgh data and training the modelsâ€¦")
 def load_system(seed: int):
     city = data.get_city("Edin")
     models = nn.train_all(city, seed)
@@ -47,7 +47,7 @@ def route_rows(city, itinerary):
                 if i + 1 < len(itinerary.places) else None)
         coordinates.append([lon, lat])
         map_points.append({
-            "label": f"Stop {i + 1} · POI {poi_id}",
+            "label": f"Stop {i + 1} Â· POI {poi_id}",
             "stop": i + 1,
             "poi_id": poi_id,
             "category": category,
@@ -68,7 +68,7 @@ def route_rows(city, itinerary):
 
 st.set_page_config(
     page_title="Edinburgh Tour Planner",
-    page_icon="🏰",
+    page_icon="ðŸ°",
     layout="wide",
     initial_sidebar_state="expanded",
 )
@@ -91,7 +91,7 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.markdown('<div class="planner-kicker">P6 · Neuro-symbolic planning</div>', unsafe_allow_html=True)
+st.markdown('<div class="planner-kicker">P6 Â· Neuro-symbolic planning</div>', unsafe_allow_html=True)
 st.markdown('<div class="planner-title">Edinburgh Tour Planner</div>', unsafe_allow_html=True)
 st.markdown(
     '<div class="planner-subtitle">Build a time-aware sightseeing itinerary from real Flickr travel patterns, '
@@ -101,13 +101,13 @@ st.markdown(
 
 with st.sidebar:
     st.divider()
-    st.header("🧭 Tour request")
+    st.header("ðŸ§­ Tour request")
     seed = st.number_input("Model seed", min_value=0, max_value=9999, value=0, step=1)
     city, models, prior = load_system(int(seed))
     places = city.pois.reset_index(drop=True)
     place_ids = [int(x) for x in places.poi_idx]
     label_by_idx = {
-        int(row.poi_idx): f"POI {int(row.poi_id)} · {row.category}"
+        int(row.poi_idx): f"POI {int(row.poi_id)} Â· {row.category}"
         for row in places.itertuples()
     }
     poi_id_to_idx = {int(row.poi_id): int(row.poi_idx) for row in places.itertuples()}
@@ -125,7 +125,7 @@ with st.sidebar:
     must_category = None if must_label == "None" else must_label
     start_hour = st.slider("Start time", 8.0, 16.0, 10.0, 0.5, format="%0.1f h")
 
-    with st.expander("⚙️ Solver settings"):
+    with st.expander("âš™ï¸ Solver settings"):
         search_algo = st.selectbox(
             "Search algorithm",
             ["astar", "ucs", "greedy"],
@@ -134,16 +134,16 @@ with st.sidebar:
         csp_mode = st.selectbox("CSP pruning", ["BT + FC + AC-3", "BT + FC", "Backtracking only"])
         cost_model = st.selectbox(
             "Route cost model",
-            ["Neural network (best held-out route F1)",
+            ["Neural network",
              "Context-aware counts (higher next-place Top-1)",
              "Goal-aware neural network", "Feature-based neural network",
              "Markov counts", "Popularity", "No model"],
         )
-    solve = st.button("🚀 Plan tour", type="primary", width="stretch")
+    solve = st.button("ðŸš€ Plan tour", type="primary", width="stretch")
 
 if solve:
     bundle_key = {
-        "Neural network (best held-out route F1)": "NN",
+        "Neural network": "NN",
         "Context-aware counts (higher next-place Top-1)": "Context Markov",
         "Goal-aware neural network": "Goal-aware NN",
         "Feature-based neural network": "Feature NN",
@@ -161,7 +161,7 @@ if solve:
         n_stops=int(num_stops),
         start_hour=float(start_hour),
     )
-    with st.spinner("Searching for a plausible itinerary…"):
+    with st.spinner("Searching for a plausible itineraryâ€¦"):
         result = integration.plan(
             city,
             models["bundles"][bundle_key],
@@ -183,11 +183,11 @@ if solve:
 
 saved = st.session_state.get("planner_result")
 tabs = st.tabs([
-    "🗺️ Itinerary & Map",
-    "🧩 CSP Analysis",
-    "⚖️ Model Comparison",
-    "📈 Experiments",
-    "ℹ️ About & Metrics",
+    "ðŸ—ºï¸ Itinerary & Map",
+    "ðŸ§© CSP Analysis",
+    "âš–ï¸ Model Comparison",
+    "ðŸ“ˆ Experiments",
+    "â„¹ï¸ About & Metrics",
 ])
 
 with tabs[0]:
@@ -261,7 +261,7 @@ with tabs[0]:
                         map_style=None,
                         tooltip={"html": "<b>{label}</b><br/>Category: {category}"},
                     ),
-                    width="stretch",
+                    width=1200,
                 )
                 st.caption("The line connects planned stops in order; it is not turn-by-turn road routing.")
             with right:
@@ -269,7 +269,7 @@ with tabs[0]:
                 st.markdown(f"**Cost model**  \n{saved['cost_model']}")
                 st.markdown(f"**Search**  \n{saved['search_algo'].upper()}")
                 st.markdown(f"**CSP pruning**  \n{saved['csp_mode']}")
-                st.markdown(f"**Category pattern**  \n{' → '.join(integration.pattern_names(city, result.pattern))}")
+                st.markdown(f"**Category pattern**  \n{' â†’ '.join(integration.pattern_names(city, result.pattern))}")
                 st.markdown(f"**Patterns evaluated**  \n{len(result.patterns_tried)}")
                 payload = {
                     "budget_minutes": request.budget_min,
@@ -323,7 +323,7 @@ with tabs[1]:
         st.dataframe(pd.DataFrame(csp_rows), width="stretch", hide_index=True)
         if patterns:
             st.markdown("#### Highest-ranked valid patterns")
-            st.write([" → ".join(integration.pattern_names(city, pattern)) for pattern in patterns])
+            st.write([" â†’ ".join(integration.pattern_names(city, pattern)) for pattern in patterns])
         else:
             st.info("No valid category pattern exists for this request. Check the start/end categories or stop count.")
     else:
@@ -349,7 +349,7 @@ with tabs[2]:
                 "Status": plan.status.replace("_", " ").title(),
                 "Route cost": None if it is None else round(it.cost, 3),
                 "Duration (h)": None if it is None else round(it.total_min / 60, 2),
-                "Route": " → ".join(str(int(city.pois.poi_id.iloc[x])) for x in it.places) if it else "—",
+                "Route": " â†’ ".join(str(int(city.pois.poi_id.iloc[x])) for x in it.places) if it else "â€”",
             })
         st.session_state["model_comparison"] = compare_rows
     model_comparison = st.session_state.get("model_comparison")
@@ -413,5 +413,5 @@ with tabs[4]:
     m1.metric("Places", info.get("n_places", city.n_places))
     m2.metric("Visits", info.get("n_visits", len(city.visits)))
     m3.metric("Trajectories", info.get("n_trajs", int(city.visits.traj.nunique())))
-    m4.metric("Transitions", info.get("n_transitions", "—"))
+    m4.metric("Transitions", info.get("n_transitions", "â€”"))
     st.caption("Source: Flickr tour-cikm16 Edinburgh subset. Photo timestamps are noisy duration proxies; walking speed, budgets, stop counts, and must-see categories are generated assumptions.")
